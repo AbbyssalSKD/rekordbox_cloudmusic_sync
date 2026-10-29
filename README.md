@@ -33,6 +33,8 @@
 | `convert` 调用外部转换/解密工具 | ⬜ 未实现 |
 | `write` 生成映射并写入 Rekordbox playlist | ⬜ 未实现 |
 
+完整业务流程图（十步，含安全闸门与维护支线）见 [docs/FLOW.md](docs/FLOW.md)。
+
 ## 快速开始
 
 要求 Python ≥ 3.11，无第三方依赖。
