@@ -1,8 +1,9 @@
-# 项目上下文（源自 `files/网易云歌单自动化读取 - DeepSeek.pdf`）
+# 项目上下文（源自 `docs/网易云歌单自动化读取 - DeepSeek.pdf`）
 
 > 这是从既有对话 PDF 中提取并经结构化整理的项目背景，作为本仓库的起始上下文。
-> 仓库名 `rekordbox_couldmusic_sync` → 目标对象是**网易云音乐（NetEase Cloud Music）**；
-> 注意目录名疑似把 `cloud` 拼成了 `could`，后续如需改名请一并处理。
+> 目标对象是**网易云音乐（NetEase Cloud Music）**；仓库/目录名为
+> `rekordbox_cloudmusic_sync`（拼写正确，PDF 中出现的 `couldmusic` 是笔误）。
+> 代码落地的当前进度见根目录 `README.md`。
 
 ## 1. 背景与痛点
 
@@ -109,10 +110,82 @@ rb-sync write
 
 ## 8. 下一步工作项
 
-1. 定名与定位（CLI 优先，Dify 可选）
+1. 定名与定位（CLI 优先，Dify 可选）—— 已定：`rb-sync`，编排器，CLI 唯一必需入口
 2. 画数据流：歌单源 → 选择配置 → 下载 → 转换/解密（外部）→ 映射 → 关 Rekordbox → dry-run → 写入
-3. 定义中间产物格式：选择配置 JSON / 映射表 JSON / 写入计划 JSON
-4. 实现 MVP 1、2 步（不碰下载与解密）
+3. 定义中间产物格式：选择配置 JSON / 映射表 JSON / 写入计划 JSON —— 选择配置与快照已落地
+4. 实现 MVP 1、2 步（不碰下载与解密）—— 第 1 步已完成；第 2 步需先补 collection 匹配
 5. 用 bangersss-mcp 的 Dry Mode 验证 playlist 创建/添加
-6. README 风险声明（不托管解密工具、不内置下载、遵守版权与平台条款）
+6. README 风险声明（不托管解密工具、不内置下载、遵守版权与平台条款）—— 已完成
 7. Dify 桥接作为后续可选模块，不阻塞 MVP
+
+## 9. 实现后补充的两条关键认知
+
+- **文件 ≠ 曲目**：Rekordbox 的 playlist 成员是 `DjmdContent` 的外键，磁盘上有文件不等于能被
+  加进 playlist。写库前必须先做「磁盘文件 → collection 曲目」匹配，未匹配的要先导入 collection。
+- **歌单链接是活引用**：`/api/v6/playlist/detail` 返回完整有序 `trackIds` 与
+  `trackUpdateTime`/`trackCount`，每次运行重新抓取并 diff 本地快照，即可实现「App 里改、
+  下次运行自动跟上」，无需推送或常驻进程。
+
+## 10. 多平台扩展（2026-10 追加需求）
+
+原上下文只假设网易云。实际需求是「输入酷狗、QQ 音乐的歌单同样有效」，因此源层改为
+适配器注册表（`rb_sync/sources/`），并实测确认三者都能匿名只读：
+
+| 平台 | 接口 | 返回 | 变更戳 | 分页 |
+|---|---|---|---|---|
+| 网易云 | `api/v6/playlist/detail` + `api/v3/song/detail` | `trackIds` 全量有序；元数据另取 | `trackUpdateTime` | 无需 |
+| QQ 音乐 | `c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg` | `songlist` 全量（含元数据） | `mtime` | 无需（实测 1286 首） |
+| 酷狗 | `mobilecdn.kugou.com/api/v3/special/song` | `data.info`（`hash` + `filename`） | 无 | 必须（`pagesize≤300`） |
+
+平台差异带来的三个设计约束：
+
+1. **曲目 ID 一律字符串**：网易云是数字、QQ 是 `songmid`、酷狗是 32 位 hash，混用类型会让
+   下游到处做判断。快照 schema 升到 v2。
+2. **变更检测不能依赖平台时间戳**：改为对「有序成员 ID 列表」算 `content_hash`，
+   三个平台统一走同一套逻辑。
+3. **裸数字 ID 有歧义**（三个平台都是数字）：链接按域名自动识别；裸数字必须 `--source`。
+
+另补 `local` 源（CSV / JSON），既是平台接口失效时的兜底，也方便手工整理歌单。
+
+跨平台同一首歌用 `mapping/match.py` 的 `track_key`（曲名 + 主艺人归一化）对齐，
+`same_track` 再用时长容差兜底 —— 混音版/现场版刻意**不**合并，避免写错歌。
+
+## 11. 当前状态与已定决策（2026-10-28）
+
+### 目标库（唯一）
+
+```
+F:\PIONEER\Master\master.db     11,038,720 B   最后写入 2026-10-26 23:32:48
+```
+
+- 移动硬盘是 **WD Elements，当前盘符 `F:`**（不是 E: —— 内置 SSD 占了 E:，这个盘符漂移
+  正是库里 332 首路径失效的成因）。盘符可能再变，程序不能写死。
+- 该库实测：`integrity_check: ok`，usn 46498，**1,231 首**，两个文件夹 `Lib` / `Playlist`
+  下共 **46 个歌单**。
+- `Attribute=1` = 文件夹，`Attribute=0` = 歌单（实证，写库时建文件夹必须用 1）。
+- 另有三份**不再关注**的库：`%APPDATA%\Pioneer\rekordbox\master.db`（8 首，6-30 的空库）、
+  `Corrupt\20260614221325`（460 首，6-11）、`Corrupt\20260630230752`（9 首，6-16）。
+  它们只是"崩过两次"的证据，不作为同步目标。
+
+### 已定决策
+
+1. **写库方式**：直接写 `master.db`（走 pyrekordbox），不做导出 XML 那条线。
+2. **不需要 LLM**：playlist 归属来自歌单本身，是「字典查找 + 集合运算 + 主键插入」，
+   用模型会破坏幂等性与可复现性。
+3. **缺失文件暂缓处理**：338 首缺失里，306 首已算出重定位映射（见 `state/relink_plan.json`：
+   root_remap 252 / basename 32 / basename_ext 22），剩 32 首（全部 Maozon 专辑）全盘确实不存在。
+   **本轮不追这 32 首，也不执行 `--apply`。**
+
+### 未解开的疑问（恢复工作时的第一件事）
+
+Rekordbox 启动时打开的到底是 `%APPDATA%` 那份（8 首）还是 `F:` 这份（1,231 首）？
+这台机器上找不到 APPDATA 重定向的证据，而 `F:` 那份在 10-26 被写过。
+**判断方法：打开 Rekordbox 看曲目数。** 这决定 `write` 该写哪个文件。
+
+### 安全约束（写库前必须满足）
+
+- Rekordbox 进程必须未运行（`library.is_rekordbox_running()` 已实现探测）。
+- 写前自动备份，写后 `PRAGMA integrity_check` 复核。
+- 目前 `doctor` / `relink` 全部只读：复制到 `state/.cache/` 再打开，用完即删。
+
+

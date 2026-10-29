@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rekordbox-cloudmusic-sync"
+version = "0.3.0"
+description = "Rekordbox 离线曲库同步编排器：网易云 / QQ音乐 / 酷狗 / 本地歌单 → Rekordbox playlist"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# 只有 doctor / relink / 将来的 write 需要；plan（读歌单）完全不需要
+rekordbox = ["pyrekordbox>=0.5.0"]
+dev = ["pyrekordbox>=0.5.0"]
+
+[project.scripts]
+rb-sync = "rb_sync.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["rb_sync*"]

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# 音频与曲库文件（永不入库）
+*.mp3
+*.flac
+*.wav
+*.aiff
+*.aif
+*.m4a
+*.ncm
+*.w4dj
+
+# 本地产物：歌单快照、选择配置、映射表、日志
+state/
+logs/
+tests/_tmp/
+.tmp/
+*.log
+
+# 本地配置与密钥
+config.local.json
+.env
+*.local
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
