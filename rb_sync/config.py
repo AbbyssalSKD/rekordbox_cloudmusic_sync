@@ -14,6 +14,15 @@ from typing import Any
 
 CONFIG_LOCAL = Path("config.local.json")
 
+# 最近一次 load_settings 的问题（解析失败 / 读不了）。
+# 以前是静默回退默认值 —— 手改配置少个逗号就会表现为"功能全坏"，所以现在把它暴露出来。
+_LAST_ERROR: str = ""
+
+
+def config_error() -> str:
+    """最近一次读配置时出的错（空字符串表示没问题）。"""
+    return _LAST_ERROR
+
 _COOKIE_FIELDS = {
     "netease": "netease_cookie",
     "qq": "qq_cookie",
@@ -110,14 +119,21 @@ class Settings:
 
 
 def load_settings(path: str | Path = CONFIG_LOCAL) -> Settings:
+    global _LAST_ERROR
+    _LAST_ERROR = ""
     p = Path(path)
     if not p.is_file():
         return Settings()
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError as exc:
+        _LAST_ERROR = f"{p.name} 第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}"
+        return Settings()
+    except OSError as exc:
+        _LAST_ERROR = f"{p.name} 读取失败：{exc}"
         return Settings()
     if not isinstance(data, dict):
+        _LAST_ERROR = f"{p.name} 顶层必须是一个对象 {{...}}"
         return Settings()
     settings = Settings.from_dict(data)
 
@@ -141,6 +157,11 @@ def save_settings(settings: Settings, path: str | Path = CONFIG_LOCAL) -> Path:
 def update_settings(patch: dict[str, Any], path: str | Path = CONFIG_LOCAL) -> Settings:
     """只更新传入的字段，其余保持原样（避免前端整表覆盖丢掉 Cookie）。"""
     current = load_settings(path)
+    if config_error():
+        # 配置已经坏了，不能再往上叠加写 —— 否则会把坏的整份写回去
+        raise ValueError(
+            f"配置文件无法解析（{config_error()}）。先修好它，或删掉 config.local.json 重新配置。"
+        )
     for key, value in patch.items():
         if key == "rekordbox" and isinstance(value, dict):
             if "db_path" in value:

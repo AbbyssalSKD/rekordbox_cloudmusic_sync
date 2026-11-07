@@ -145,6 +145,15 @@ async function loadStatus() {
     chip.className = "chip ok";
     chip.title = "页面与后端版本一致";
   }
+  const cfgChip = $("#chip-config");
+  if (st.config_error) {
+    cfgChip.hidden = false;
+    cfgChip.title = st.config_error;
+    cfgChip.textContent = "配置文件有误（已回退默认值）";
+  } else {
+    cfgChip.hidden = true;
+  }
+
   const db = $("#chip-db");
   if (st.db_found) {
     db.textContent = st.configured ? `库：${st.db_path}` : `库：默认位置`;

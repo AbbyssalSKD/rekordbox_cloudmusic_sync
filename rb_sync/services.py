@@ -194,6 +194,21 @@ def probe_environment(db_path: str | Path | None = None) -> dict:
     settings = load_settings()
     checks: list[dict] = []
 
+    # 0) 配置文件本身
+    from .config import config_error
+
+    if config_error():
+        checks.append(
+            {
+                "level": "error",
+                "key": "config",
+                "message": (
+                    f"配置文件有误：{config_error()}"
+                    "（已回退到默认值，下面看到的路径可能不是你配置的）"
+                ),
+            }
+        )
+
     # 1) 库
     library_info: dict = {}
     try:

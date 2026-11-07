@@ -529,7 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.6.0")
+    parser.add_argument("--version", action="version", version="rb-sync 0.6.1")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(

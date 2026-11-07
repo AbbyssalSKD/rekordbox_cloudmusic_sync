@@ -5,8 +5,8 @@
 
 - 最近更新：**2026-11-06**
 - 最新提交：`git log -1 --oneline`（本文件不写死自己的哈希，否则每次提交都会自我矛盾）
-- 代码版本：`rb-sync 0.6.0`
-- 测试基线：`78` 个离线单测全过
+- 代码版本：`rb-sync 0.6.1`
+- 测试基线：`80` 个离线单测全过
 
 ---
 
@@ -24,7 +24,7 @@
 
 1. **完整读本文件**（不是扫一眼）。
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
-3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `78 tests OK`。
+3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `80 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
    - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
    - `F:\PIONEER\Master\master.db`（或实际路径）可读；
@@ -55,9 +55,9 @@
 | Rekordbox | **7.2.14**，安装在 `D:\rekordbox 7.2.14\`（注册表 `InstallLocation` 为空，pyrekordbox 必须显式指路） |
 | 真正的库 | `F:\PIONEER\Master\master.db`，**10.5 MB / 1,231 首 / 47 个歌单**，`integrity_check: ok`，usn 46498 |
 | APPDATA 那份库 | `%APPDATA%\Pioneer\rekordbox\master.db`，1.57 MB / **8 首**（全是自带采样），2026-06-30 之后没再动过 |
-| 移动硬盘 | WD Elements 2620，931 GB，USB。**盘符会漂移**：曾作为 `E:`，后来变成 `F:`，2026-11-06 未挂载 |
-| 音乐文件 | `F:\Music`（1,081 个音频）+ `E:\Music`（229 个）；内置 E: 盘也有一份 |
-| 未解密 | `E:\Music\Cloud Music\VipSongsDownload\` 有 **24 个 `.ncm`**（3.88 GB），从未解开过 |
+| 移动硬盘 | WD Elements 2620，931 GB，USB。**盘符会漂移**：曾作为 `E:`，后来变成 `F:` |
+| 音乐文件 | **只用 `F:\Music`**（1,081 个音频，2026-11-06 起）。`E:\Music` 那份用户已明确弃用，**不要再把它加进曲库目录或搜索路径** |
+| 未解密 | 24 个 `.ncm` 在 `E:\Music\Cloud Music\VipSongsDownload`（3.88 GB）—— 随 E 盘一起弃用；其中 12 首在 `F:\Music` 已有可播放版本，另 12 首只存在于 E |
 | Python | 系统 3.14.7（无 pyrekordbox）；项目 `.venv` 内装了 pyrekordbox 0.5.0 |
 | C 盘 | 只剩约 5.8 GB，空间紧张 —— 别往 C 盘写大文件 |
 
@@ -156,11 +156,12 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 
 ```
 doctor    → 1,231 首 / 47 个歌单 / integrity ok / 843 在 / 338 缺失
-relink    → 306 可映射（root_remap 252 + basename 32 + basename_ext 22），32 未匹配，0 歧义
+relink    → 338 失效：284 可映射（root_remap 252 + basename 13 + basename_ext 19），54 未匹配
+            （只搜 `F:\Music`。早先搜 E: 时是 306，其中 29 条指向 E:，随 E 弃用作废）
 fetch     → 热歌榜 200 首：本地已有 0 / 缺失 200 → 清单 200 行（handoff 模式）
             自建 24 首 .ncm 歌单：本地已有 0 / 缺失 0 / **待解密 24**（不再误判为已有）
 web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
-单测      → 78 个全过（venv 与裸系统 Python 各一遍）
+单测      → 80 个全过（venv 与裸系统 Python 各一遍）
 ```
 
 ### 7.2 W1 已提交（2026-11-06）
@@ -168,8 +169,12 @@ web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
 服务层抽取、`rb_sync/web/`、结构化配置、54 个单测、本文件，都在 2026-11-06 的 W1 提交里。
 开工时 `git status` 应当干净；如果有未提交改动，先看清是谁的、改了什么，再继续。
 
-`config.local.json` 已配置为 `F:\PIONEER\Master\master.db` + `["F:\Music","E:\Music"]`
-（该文件已 gitignore）。**盘符一变就要在 WebUI「设置」或该文件里改，否则库功能会报错。**
+`config.local.json`（已 gitignore）当前：
+`db_path = F:\PIONEER\Master\master.db`、`music_roots = ["F:\Music"]`、
+`previous_roots = ["E:/Music"]`。
+
+> `previous_roots` 里的 `E:/Music` **不是"还要用 E 盘"**，而是库里记录着的旧路径前缀 ——
+> 重定位要靠它才能把 338 条失效路径映射到 `F:/Music`。删掉它 relink 就没有"旧根"可用了。
 
 ### 7.3 未实现
 
@@ -191,8 +196,8 @@ web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
 | 歌单 | 47 个（`Lib` 文件夹 32 个 + `Playlist` 文件夹 14 个 + 根级 1 个） |
 | `Attribute` 语义 | **1 = 文件夹，0 = 歌单**（实证，写库建文件夹必须用 1） |
 | 文件在位 | 843 |
-| 路径失效 | 338 → 306 可自动重映射 → **32 确实不存在**（全在 Maozon 专辑，全盘搜过） |
-| 换扩展名的映射 | 22 首（`.flac → .wav`），**默认不勾选**，音质可能不同 |
+| 路径失效 | 338 → **284 可自动重映射**（只搜 `F:\Music`）→ 54 未匹配，需人工或重新下载 |
+| 换扩展名的映射 | 19 首（`.flac → .wav`），**默认不勾选**，音质可能不同 |
 
 ---
 
@@ -285,6 +290,8 @@ docs/
 9. **PowerShell 传含引号的参数给 Python 会掉引号**。用 `--command 'netease=tool "{url}"'` 这类模板做端到端测试时，改用 Python 脚本直接调 `services.fetch_run(commands=...)`，别在 PowerShell 里拼。
 10. **`.ncm` 曾被误判成"已有"**。`.ncm` 一度在"音频后缀"清单里，于是加密文件让 fetch 认为这首已就绪，Rekordbox 却放不了。现在 `model.py` 分成 `PLAYABLE_SUFFIXES` / `ENCRYPTED_SUFFIXES`，加密容器单独一档 `encrypted`，状态记为 `encrypted`（**不会被跳过**，配了后处理就会重试）。可播放文件优先于加密文件。
 11. **后处理钩子只是"跑一条你给的命令"**。`fetch.post_command` 对「只有加密容器」的曲目逐条执行，占位符里有 `{file}`。仓库不内置任何解密实现，也不在文档里给可直接复制的解密命令 —— 包装脚本放仓库外。
+12. **手改 `config.local.json` 少个逗号 = 一切看起来都坏了**。以前 `load_settings()` 解析失败会**静默回退默认值**（库路径空、曲目目录空），界面表现就是"什么都没配、功能全废"（2026-11-06 真实发生）。现在：`config_error()` 会带回具体行列；`probe` 第一条就报红；Web 顶栏显示「配置文件有误（已回退默认值）」；`update_settings` 拒绝往坏配置上写。**改配置后先看顶栏有没有红标。**
+13. **`previous_roots` ≠ 扫描目录**。它存的是**库里记录的旧路径前缀**（现在是 `E:/Music`）。用户说"忘掉 E 盘"指的是不再扫 `E:\Music`，但旧根必须留着，否则 relink 没有"从哪映射"的依据。
 
 ---
 
@@ -292,8 +299,9 @@ docs/
 
 1. **Rekordbox 打开的是哪份库？**（唯一硬阻塞）判断方法：打开 Rekordbox 看曲目数 —— 1,231 → `F:` 那份；8 → `%APPDATA%` 那份。台面上找不到把 APPDATA 指向 `F:` 的配置（不是 junction、无环境变量）。
 2. **32 首确实不存在的曲目**（Maozon 专辑）：已确认全盘搜不到，需要重新下载或放弃。用户当时说「先不用管」。
-3. **24 个 `.ncm` 从未解密**：说明「下载→解密→转格式」这条链在本机还没跑通过。
-4. **22 首换扩展名的映射**（`.flac → .wav`）：需要用户确认音质可接受。
+3. **24 个 `.ncm` 已随 E 盘弃用**，其中 12 首在 `F:\Music` 有可播放版本、12 首只在 E。
+   用户若还想要这 12 首，只能在 E 盘还在时处理（解密/另存）或以后重新下载。
+4. **19 首换扩展名的映射**（`.flac → .wav`）：需要用户确认音质可接受。
 5. 仓库根目录有个与本项目无关的 `C盘扫描报告_2026-11-05.md`，**不要提交**。
 
 ---
@@ -327,3 +335,4 @@ docs/
 | 2026-11-06 | W1 提交 | 建立 `CLAUDE.md`：需求、技术路线、进度、硬约束、已知坑、DoR/DoD |
 | 2026-11-06 | 本次提交 | `fetch`：缺口计算（含多歌单归属）、三层匹配、清单、外部命令适配、增量状态、WebUI 下载页；73 单测 |
 | 2026-11-06 | 本次提交 | 加密容器单独成档（不再误判为已有）+ 通用后处理钩子 `fetch.post_command`；78 单测 |
+| 2026-11-06 | 本次提交 | 弃用 E 盘（只扫 `F:\Music`）：relink 重算 338→284；配置解析失败不再静默回退；WebUI 版本/配置红标；80 单测 |

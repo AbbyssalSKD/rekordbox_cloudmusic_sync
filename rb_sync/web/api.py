@@ -97,6 +97,7 @@ class Api:
 
     def status(self) -> dict:
         from .. import __version__
+        from ..config import config_error
         from ..rekordbox import RekordboxError, is_rekordbox_running, resolve_db_path
 
         settings = load_settings()
@@ -109,6 +110,7 @@ class Api:
             pass
         return {
             "version": __version__,
+            "config_error": config_error(),
             "state_dir": str(self.state_dir.resolve()),
             "db_path": db_path,
             "db_found": db_ok,

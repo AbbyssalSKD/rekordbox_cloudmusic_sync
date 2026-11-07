@@ -13,6 +13,7 @@ from pathlib import Path
 from rb_sync import services
 from rb_sync.config import (
     Settings,
+    config_error,
     load_cookie,
     load_settings,
     save_settings,
@@ -83,6 +84,27 @@ class TestSettings(unittest.TestCase):
             path = tmp / "config.local.json"
             path.write_text("{not json", encoding="utf-8")
             self.assertEqual(load_settings(path).db_path, "")
+
+    def test_corrupt_file_is_reported(self):
+        """坏配置不能只是静默回退 —— 否则用户以为功能坏了。"""
+        with temp_dir() as tmp:
+            bad = tmp / "config.local.json"
+            bad.write_text('{"a": 1 "b": 2}', encoding="utf-8")
+            load_settings(bad)
+            self.assertTrue(config_error())
+            self.assertIn("行", config_error())
+
+            good = tmp / "good.json"
+            save_settings(Settings(db_path="ok.db"), good)
+            load_settings(good)
+            self.assertEqual(config_error(), "")
+
+    def test_update_refuses_to_write_over_broken_config(self):
+        with temp_dir() as tmp:
+            bad = tmp / "config.local.json"
+            bad.write_text("{oops", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                update_settings({"rekordbox": {"db_path": "x"}}, bad)
 
     def test_legacy_flat_keys(self):
         with temp_dir() as tmp:
