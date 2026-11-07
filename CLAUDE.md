@@ -228,6 +228,9 @@ python -m rb_sync relink  --db "F:\PIONEER\Master\master.db" `
 # 图形界面（仅本机 127.0.0.1）
 python -m rb_sync serve
 
+# 或者双击仓库根目录的「启动WebUI.bat」—— 等价于上面那条，会自动开浏览器；
+# 已在跑时不重复启动，只把浏览器打开
+
 # 编码体检（防止文件被写坏）
 .\.venv\Scripts\python.exe .venv\scan_encoding.py
 ```
@@ -382,3 +385,4 @@ docs/
 | 2026-11-06 | 未提交（仅配置） | 接入 `Majjcom/ncmpp`（D:\ncmpp + 包装脚本 decrypt_one.cmd），`fetch.post_command` 已配置；仓库代码未改动 |
 | 2026-11-06 | 本次提交 | **0.7.0 整歌单模式**：`fetch --run-playlists` + WebUI「整歌单下载」按钮；下载→挑缺的入库→清空暂存区（保留 cookie）；`downloader/pipeline.py`；85 单测 |
 | 2026-11-06 | 本次提交 | **0.7.1 解密接入管线**：整歌单模式自动「下载→解密→挑缺的入库→清空」；解不开/没配命令的容器**永不删除**；真实 `.ncm` 验证通过（134 MB → 133.9 MB FLAC）；88 单测 |
+| 2026-11-06 | 本次提交 | `启动WebUI.bat`：双击即起本机 WebUI（已运行时只开浏览器）；文件内纯 ASCII 无 BOM |
