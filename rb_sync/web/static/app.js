@@ -247,6 +247,60 @@ function renderChanges() {
   }).join("");
 }
 
+/* ---------------------------------------------------------------- 下载清单 */
+
+async function loadFetchPlan() {
+  $("#btn-fetch-plan").disabled = true;
+  try {
+    const result = await runJob("/api/fetch/plan", {}, "计算缺口");
+    renderFetchPlan(result);
+  } catch (err) {
+    $("#fetch-result").classList.remove("empty");
+    $("#fetch-result").innerHTML = `<div class="err">${esc(err.message)}</div>`;
+  } finally {
+    $("#btn-fetch-plan").disabled = false;
+  }
+}
+
+function renderFetchPlan(data) {
+  const box = $("#fetch-result");
+  box.classList.remove("empty");
+  const counts = data.counts || {};
+  const bySource = {};
+  (data.missing || []).forEach((item) => {
+    bySource[item.source] = bySource[item.source] || [];
+    bySource[item.source].push(item);
+  });
+  const sourceRows = Object.entries(bySource).map(([src, items]) => {
+    const manifest = (data.manifest || {})[src];
+    return `<tr>
+      <td><span class="pill">${esc(src)}</span></td>
+      <td class="num">${items.length}</td>
+      <td class="mono">${manifest ? esc(manifest) : "—"}</td>
+    </tr>`;
+  }).join("");
+
+  const sample = (data.missing || []).slice(0, 12).map((item) => `
+    <tr>
+      <td>${esc(item.title || "(无标题)")}</td>
+      <td>${esc((item.artists || []).join(" / "))}</td>
+      <td>${esc((item.playlists || []).join("、"))}</td>
+    </tr>`).join("");
+
+  box.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">歌单成员</div><div class="v">${counts.total || 0}</div></div>
+      <div class="stat"><div class="k">本地已有</div><div class="v ok">${counts.present || 0}</div></div>
+      <div class="stat"><div class="k">缺失</div><div class="v warn">${counts.missing || 0}</div></div>
+      <div class="stat"><div class="k">有歧义</div><div class="v err">${counts.ambiguous || 0}</div></div>
+    </div>
+    <p class="hint mono">曲库目录：${esc((data.music_roots || []).join(" , ") || "（未设置）")}</p>
+    ${sourceRows ? `<table><thead><tr><th>平台</th><th>缺失</th><th>清单文件</th></tr></thead><tbody>${sourceRows}</tbody></table>` : ""}
+    ${sample ? `<details open><summary>缺失曲目（前 12 条）</summary>
+      <table><thead><tr><th>曲名</th><th>艺人</th><th>所属歌单</th></tr></thead><tbody>${sample}</tbody></table></details>` : ""}
+    ${counts.missing ? `<p class="hint">执行下载：<code>rb-sync fetch --run</code>（需先在配置里设置 fetch.commands）</p>` : ""}`;
+}
+
 /* ---------------------------------------------------------------- 库体检 */
 
 async function loadLibrary() {
@@ -356,6 +410,7 @@ async function boot() {
   $("#btn-save").addEventListener("click", () => saveSettings().catch((e) => jobStatus(e.message, "err")));
   $("#btn-probe").addEventListener("click", () => probe().catch((e) => jobStatus(e.message, "err")));
   $("#btn-plan").addEventListener("click", readPlaylists);
+  $("#btn-fetch-plan").addEventListener("click", loadFetchPlan);
   $("#btn-library").addEventListener("click", loadLibrary);
   $("#btn-relink").addEventListener("click", previewRelink);
 

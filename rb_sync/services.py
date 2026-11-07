@@ -272,3 +272,163 @@ def probe_environment(db_path: str | Path | None = None) -> dict:
     )
 
     return {"library": library_info, "checks": checks, "rekordbox_running": running}
+
+# ---------------------------------------------------------------- fetch
+
+
+def fetch_plan(
+    state_dir: str | Path = DEFAULT_STATE_DIR,
+    music_roots: list[str] | None = None,
+    only_source: str | None = None,
+):
+    """算出「本地已有 / 缺失 / 歧义」，返回 FetchPlan。不下载任何东西。"""
+    from .downloader import build_fetch_plan
+
+    settings = load_settings()
+    roots = list(music_roots) if music_roots is not None else list(settings.music_roots)
+    return build_fetch_plan(state_dir, roots, only_source)
+
+
+def fetch_write_manifest(plan, out_dir: str | Path) -> dict:
+    """把缺失清单按平台写成 URL 列表，交给用户自己的下载工具。"""
+    from .downloader import write_manifest
+
+    return write_manifest(plan, out_dir)
+
+
+def _sync_state_with_plan(state, plan) -> dict:
+    """让 fetch_state 与磁盘实际状态对齐。
+
+    语义上分两档：
+    - ``present``：磁盘上真的找到了（可信，带路径）
+    - ``downloaded``：外部命令返回 0，但可能还没按预期落盘或文件名不含艺人
+
+    所以这里只把「找到的」标为 present、「本来是 present 但文件没了」降级为 missing；
+    ``downloaded`` 不动 —— 由 ``unverified`` 数量提醒用户去人工确认。
+    """
+    marked_present = 0
+    lost = 0
+    for item in plan.present:
+        entry = state.get(item.uid) or {}
+        if entry.get("status") != "present" or entry.get("path") != item.matched_path:
+            state.mark(item.uid, "present", path=item.matched_path)
+            marked_present += 1
+    for item in plan.missing:
+        entry = state.get(item.uid) or {}
+        if entry.get("status") == "present":
+            state.mark(item.uid, "missing")
+            lost += 1
+    state.save()
+    return {"marked_present": marked_present, "lost": lost}
+
+
+def _unverified_uids(state, plan) -> list[str]:
+    """命令成功了、但磁盘上没确认到的曲目。"""
+    present = {item.uid for item in plan.present}
+    return [
+        uid
+        for uid, entry in state.items.items()
+        if entry.get("status") == "downloaded" and uid not in present
+    ]
+
+
+def fetch_run(
+    state_dir: str | Path = DEFAULT_STATE_DIR,
+    music_roots: list[str] | None = None,
+    only_source: str | None = None,
+    out_dir: str | None = None,
+    limit: int | None = None,
+    timeout: float | None = None,
+    on_progress=None,
+    commands: dict[str, str] | None = None,
+    force: bool = False,
+) -> dict:
+    """对缺失曲目调用**用户配置的外部命令**。项目本身不下载。
+
+    没有为某个平台配置命令时，该平台的曲目会被计入 ``skipped_no_command`` ——
+    这不是错误，是 handoff 模式：清单已经生成，交给用户自己的工具。
+    """
+    from .downloader import FetchState, run_items
+
+    settings = load_settings()
+    roots = list(music_roots) if music_roots is not None else list(settings.music_roots)
+    plan = fetch_plan(state_dir, roots, only_source)
+    state = FetchState(Path(state_dir) / "fetch_state.json")
+
+    queued = [item for item in plan.missing if force or not state.can_skip(item.uid)]
+    if limit and limit > 0:
+        queued = queued[:limit]
+
+    out = str(out_dir or settings.fetch_out_dir or "")
+    per_item_timeout = float(timeout or settings.fetch_timeout or 600)
+
+    by_source: dict[str, list] = {}
+    for item in queued:
+        by_source.setdefault(item.track.source, []).append(item)
+
+    command_map = dict(settings.fetch_commands) if commands is None else dict(commands)
+
+    summaries: dict[str, dict] = {}
+    skipped: dict[str, int] = {}
+    for source, items in by_source.items():
+        template = command_map.get(source, "")
+        if not template:
+            skipped[source] = len(items)
+            continue
+        summary = run_items(
+            template,
+            items,
+            out_dir=out,
+            timeout=per_item_timeout,
+            on_progress=on_progress,
+        )
+        summaries[source] = summary.to_dict()
+        for result in summary.results:
+            state.mark(
+                result.uid,
+                "downloaded" if result.ok else "failed",
+                error="" if result.ok else (result.stderr or result.stdout),
+            )
+    state.save()
+
+    # 跑完重扫一次：只有真的落盘才算"已确认"，其余记为待人工核对
+    after = fetch_plan(state_dir, roots, only_source)
+    synced = _sync_state_with_plan(state, after)
+    unverified = _unverified_uids(state, after)
+
+    return {
+        "queued": len(queued),
+        "out_dir": out,
+        "per_source": {
+            source: {
+                "queued": len(items),
+                "ok": summaries.get(source, {}).get("counts", {}).get("ok", 0),
+                "failed": summaries.get(source, {}).get("counts", {}).get("failed", 0),
+                "skipped_no_command": skipped.get(source, 0),
+            }
+            for source, items in by_source.items()
+        },
+        "results": summaries,
+        "before": plan.to_dict()["counts"],
+        "after": after.to_dict()["counts"],
+        "state_sync": synced,
+        "unverified": unverified,
+    }
+
+
+def fetch_verify(
+    state_dir: str | Path = DEFAULT_STATE_DIR,
+    music_roots: list[str] | None = None,
+    only_source: str | None = None,
+) -> dict:
+    """只重扫磁盘并更新状态，不执行任何命令。"""
+    from .downloader import FetchState
+
+    plan = fetch_plan(state_dir, music_roots, only_source)
+    state = FetchState(Path(state_dir) / "fetch_state.json")
+    synced = _sync_state_with_plan(state, plan)
+    return {
+        "counts": plan.to_dict()["counts"],
+        "state_sync": synced,
+        "unverified": _unverified_uids(state, plan),
+    }

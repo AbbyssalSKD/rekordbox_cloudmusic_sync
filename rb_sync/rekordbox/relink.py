@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-AUDIO_SUFFIXES = (".mp3", ".flac", ".wav", ".aiff", ".aif", ".m4a", ".ogg", ".mp4", ".ncm")
+from ..model import AUDIO_SUFFIXES
 
 
 @dataclass

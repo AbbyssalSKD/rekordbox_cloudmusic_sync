@@ -36,6 +36,27 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+def normalize_words(text: str) -> str:
+    """和 :func:`normalize` 相同，但保留词边界（标点变空格）。
+
+    用途：判断「曲名是否作为独立词出现在文件名里」，避免 ``Love`` 命中 ``Lovely``。
+    """
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKC", text).lower()
+    text = _NOISE_BRACKETS.sub(" ", text)
+    text = _FEAT.sub("", text)
+    text = _PUNCT.sub(" ", text)
+    return " ".join(text.split())
+
+
+def contains_words(haystack_words: str, needle_words: str) -> bool:
+    """``needle_words`` 是否作为完整词串出现在 ``haystack_words`` 里。"""
+    if not haystack_words or not needle_words:
+        return False
+    return f" {needle_words} " in f" {haystack_words} "
+
+
 def split_artists(artists: str | tuple[str, ...]) -> tuple[str, ...]:
     if isinstance(artists, str):
         return tuple(a.strip() for a in _MULTI_SEP.split(artists) if a.strip())

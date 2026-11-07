@@ -29,6 +29,10 @@ class Settings:
     music_roots: list[str] = field(default_factory=list)
     previous_roots: list[str] = field(default_factory=list)
     state_dir: str = "state"
+    # fetch 阶段：每个平台一条外部下载命令模板（项目本身不下载）
+    fetch_commands: dict[str, str] = field(default_factory=dict)
+    fetch_out_dir: str = ""
+    fetch_timeout: int = 600
     netease_cookie: str = ""
     qq_cookie: str = ""
     kugou_cookie: str = ""
@@ -54,6 +58,11 @@ class Settings:
             },
             "paths": {"previous_roots": list(self.previous_roots)},
             "state_dir": self.state_dir,
+            "fetch": {
+                "commands": dict(self.fetch_commands),
+                "out_dir": self.fetch_out_dir,
+                "timeout": self.fetch_timeout,
+            },
             "netease_cookie": secret(self.netease_cookie),
             "qq_cookie": secret(self.qq_cookie),
             "kugou_cookie": secret(self.kugou_cookie),
@@ -64,6 +73,10 @@ class Settings:
     def from_dict(cls, data: dict[str, Any]) -> "Settings":
         rekordbox = data.get("rekordbox") or {}
         paths = data.get("paths") or {}
+        fetch = data.get("fetch") or {}
+        commands = fetch.get("commands")
+        if not isinstance(commands, dict):
+            commands = {}
         web = data.get("web") or {}
         music_roots = rekordbox.get("music_roots")
         if not isinstance(music_roots, list):
@@ -76,6 +89,9 @@ class Settings:
             music_roots=[str(p) for p in music_roots if p],
             previous_roots=[str(p) for p in previous_roots if p],
             state_dir=str(data.get("state_dir") or "state"),
+            fetch_commands={str(k): str(v) for k, v in commands.items() if v},
+            fetch_out_dir=str(fetch.get("out_dir") or ""),
+            fetch_timeout=int(fetch.get("timeout") or 600),
             netease_cookie=str(data.get("netease_cookie") or ""),
             qq_cookie=str(data.get("qq_cookie") or ""),
             kugou_cookie=str(data.get("kugou_cookie") or ""),
@@ -137,6 +153,20 @@ def update_settings(patch: dict[str, Any], path: str | Path = CONFIG_LOCAL) -> S
                 current.web_host = str(value["host"])
             if value.get("port"):
                 current.web_port = int(value["port"])
+        elif key == "fetch" and isinstance(value, dict):
+            if isinstance(value.get("commands"), dict):
+                merged = dict(current.fetch_commands)
+                for source, template in value["commands"].items():
+                    text = str(template or "").strip()
+                    if text:
+                        merged[str(source)] = text
+                    else:
+                        merged.pop(str(source), None)  # 传空字符串 = 删除该平台的命令
+                current.fetch_commands = merged
+            if "out_dir" in value:
+                current.fetch_out_dir = str(value["out_dir"] or "")
+            if value.get("timeout"):
+                current.fetch_timeout = int(value["timeout"])
         elif key in ("netease_cookie", "qq_cookie", "kugou_cookie", "state_dir"):
             setattr(current, key, str(value or ""))
     save_settings(current, path)

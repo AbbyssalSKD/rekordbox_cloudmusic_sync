@@ -56,7 +56,7 @@ flowchart TD
     end
     C0 -- "是" --> C1
 
-    subgraph S3["④ 获取音频 · fetch ⬜"]
+    subgraph S3["④ 获取音频 · fetch ✅"]
         direction TB
         D1["按待下载清单调用外部下载器"]
         D2{"拿到的是 .ncm？"}
@@ -198,7 +198,7 @@ flowchart TD
 | 0 | 前置检查 | 库路径 | 库可用性、RB 进程状态 | `doctor` | ✅ |
 | 1 | 读歌单 | 链接 / ID / CSV | `selection.json` + 歌单快照 | `plan` | ✅ |
 | 2 | 曲目解析 | 快照 + 磁盘文件 | 已有 / 待下载 / 歧义 三分类 | （未接 CLI） | ⬜ |
-| 3 | 获取音频 | 待下载清单 | 音频文件 | `fetch` | ⬜ |
+| 3 | 获取音频 | 待下载清单 | 音频文件（由外部命令产出） | `fetch` | ✅ |
 | 4 | 转换 | 原始音频 | Rekordbox 可读格式 | `convert` | ⬜ |
 | 5 | 归属映射 | 快照 + 曲目身份 | `track → [playlist]` | `mapping` | ⬜ |
 | 6 | collection 对齐 | 磁盘文件 + 库 | `content_id` 对应表 | （未接 CLI） | ⬜ |

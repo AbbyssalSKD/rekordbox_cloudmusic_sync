@@ -174,7 +174,8 @@ def _print_report(
     print(f"选择配置：{selection_path.resolve() if selection_path else '-'}")
     print(f"歌单快照：{store.playlists_dir.resolve()}")
     print()
-    print("下一步（尚未实现）：rb-sync fetch   # 按选择配置拉取缺失曲目")
+    print("下一步：rb-sync fetch            # 算缺口、生成下载清单")
+    print("        rb-sync serve            # 或者用图形界面")
 
 
 def _status_text(item: dict) -> str:
@@ -351,6 +352,145 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------------- fetch
+
+
+def parse_commands(raw: list[str] | None) -> dict[str, str] | None:
+    """把 ``--command netease=...`` 解析成 {source: template}。"""
+    if not raw:
+        return None
+    commands: dict[str, str] = {}
+    for entry in raw:
+        source, sep, template = entry.partition("=")
+        if not sep or not source.strip() or not template.strip():
+            raise ValueError(f"--command 需要写成 平台=命令，收到：{entry}")
+        commands[source.strip()] = template.strip()
+    return commands
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    roots = list(args.music_root or []) or None
+
+    if args.verify:
+        result = services.fetch_verify(args.state_dir, roots, args.source)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        counts = result["counts"]
+        print(f"本地已有 : {counts['present']}")
+        print(f"仍缺失   : {counts['missing']}")
+        print(f"有歧义   : {counts['ambiguous']}")
+        synced = result["state_sync"]
+        print(f"状态更新 : 新标记已有 {synced['marked_present']}，标记丢失 {synced['lost']}")
+        return 0
+
+    try:
+        plan = services.fetch_plan(args.state_dir, roots, args.source)
+    except Exception as exc:  # noqa: BLE001 - 配置/IO 问题统一提示
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+
+    if not plan.items:
+        print("还没有选择配置（state/selection.json 为空）。")
+        print("先运行：rb-sync plan --playlist <歌单链接>")
+        return 1
+
+    counts = plan.to_dict()["counts"]
+    manifest_dir = Path(args.manifest_dir) if args.manifest_dir else Path(args.state_dir) / "fetch"
+    written: dict = {}
+    if counts["missing"]:
+        try:
+            written = services.fetch_write_manifest(plan, manifest_dir)
+        except OSError as exc:
+            print(f"提示：清单写入失败（{exc}），继续。", file=sys.stderr)
+
+    if args.json and not args.run:
+        payload = plan.to_dict()
+        payload["manifest"] = {k: str(v) for k, v in written.items()}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"歌单成员 : {counts['total']} 首（已按曲目去重）")
+    print(f"曲库目录 : {', '.join(plan.music_roots) if plan.music_roots else '（未设置）'}")
+    print(
+        f"本地已有 : {counts['present']}    缺失 : {counts['missing']}    "
+        f"有歧义 : {counts['ambiguous']}"
+    )
+
+    if not plan.music_roots:
+        print()
+        print("提示：还没设置曲库目录，所以全部曲目都会被判为缺失。")
+        print("      WebUI「设置」或 config.local.json 里的 rekordbox.music_roots")
+
+    if counts["missing"]:
+        print()
+        print("缺失（按平台）：")
+        for source, items in plan.missing_by_source().items():
+            target = written.get(source)
+            suffix = f" → 清单 {target}" if target else ""
+            print(f"  {source:<8}{len(items):>5} 首{suffix}")
+
+    if counts["ambiguous"]:
+        print()
+        print("有歧义（同名文件多处命中，未计入下载）：")
+        for item in plan.ambiguous[:10]:
+            print(f"  {_truncate(item.track.title or '(无标题)', 40)}  "
+                  f"{item.candidates} 个候选")
+        if len(plan.ambiguous) > 10:
+            print(f"  …… 另有 {len(plan.ambiguous) - 10} 条")
+
+    if not args.run:
+        print()
+        if written:
+            print("这是 handoff 模式：清单已生成，交给你的下载工具即可。")
+        print("要执行外部下载命令，加 --run（需先在配置里为对应平台设置 fetch.commands）")
+        return 0
+
+    # ---- 真正执行外部命令 ----
+    print()
+    print("执行外部下载命令…")
+
+    def progress(index: int, total: int, item, command: str) -> None:
+        print(f"  [{index}/{total}] {item.track.title} - {item.track.artist_text}")
+
+    try:
+        outcome = services.fetch_run(
+            state_dir=args.state_dir,
+            music_roots=roots,
+            only_source=args.source,
+            out_dir=args.out,
+            limit=args.limit,
+            timeout=args.timeout,
+            on_progress=progress,
+            commands=parse_commands(args.command),
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(outcome, ensure_ascii=False, indent=2))
+        return 0 if not outcome.get("after", {}).get("missing") else 1
+
+    print()
+    for source, stats in outcome["per_source"].items():
+        if stats["skipped_no_command"]:
+            print(
+                f"  {source}: {stats['skipped_no_command']} 首未执行 —— "
+                "没有配置 fetch.commands（清单可直接喂给外部工具）"
+            )
+        elif stats["queued"]:
+            print(f"  {source}: 成功 {stats['ok']} / 失败 {stats['failed']}")
+
+    after = outcome["after"]
+    print()
+    print(f"重扫结果 : 本地已有 {after['present']}    仍缺失 {after['missing']}")
+    if after["missing"]:
+        print("仍缺失的可以重跑一次 fetch --run（已成功的会跳过）")
+    return 0 if not after["missing"] else 1
+
+
 # ------------------------------------------------------------------ argparse
 
 
@@ -359,7 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.4.0")
+    parser.add_argument("--version", action="version", version="rb-sync 0.5.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(
@@ -445,6 +585,48 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-dir", default=str(DEFAULT_STATE_DIR), help=f"状态目录（默认 {DEFAULT_STATE_DIR}）"
     )
     serve_cmd.set_defaults(func=cmd_serve)
+
+    fetch_cmd = sub.add_parser(
+        "fetch",
+        help="算清缺哪些曲目，生成清单 / 调用外部下载命令",
+        description=(
+            "读取选择配置与歌单快照，扫曲库目录判断哪些曲目本地已有，"
+            "输出缺失清单。加 --run 才会调用你在配置里指定的外部下载命令；"
+            "项目本身不下载、不解密任何内容。"
+        ),
+    )
+    fetch_cmd.add_argument(
+        "--music-root",
+        action="append",
+        metavar="目录",
+        help="曲库目录，可重复（默认用配置里的 rekordbox.music_roots）",
+    )
+    fetch_cmd.add_argument(
+        "--source", default=None, choices=["netease", "qq", "kugou", "local"],
+        help="只处理某个平台",
+    )
+    fetch_cmd.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
+    fetch_cmd.add_argument(
+        "--manifest-dir", default=None, metavar="目录",
+        help="缺失清单输出目录（默认 <state-dir>/fetch）",
+    )
+    fetch_cmd.add_argument("--out", default=None, metavar="目录",
+                           help="外部命令的 {out} 占位符值 / 下载落点")
+    fetch_cmd.add_argument("--limit", type=int, default=None, help="本次最多执行几条")
+    fetch_cmd.add_argument("--timeout", type=float, default=None, help="单条命令超时秒数")
+    fetch_cmd.add_argument("--run", action="store_true", help="真正执行外部下载命令")
+    fetch_cmd.add_argument(
+        "--force", action="store_true", help="忽略 fetch_state，重新执行（默认跳过已成功的）"
+    )
+    fetch_cmd.add_argument(
+        "--command",
+        action="append",
+        metavar="平台=命令",
+        help='临时指定某个平台的下载命令，例如 --command netease=\'yun "{url}" -o "{out}"\'',
+    )
+    fetch_cmd.add_argument("--verify", action="store_true", help="只重扫磁盘并更新状态")
+    fetch_cmd.add_argument("--json", action="store_true", help="以 JSON 输出")
+    fetch_cmd.set_defaults(func=cmd_fetch)
     return parser
 
 

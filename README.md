@@ -32,6 +32,7 @@
 | `plan` 多平台读取歌单 → 选择配置 + 快照 + 变更检测 | ✅ 已实现 |
 | `doctor` 库体检（只读，永远操作副本） | ✅ 已实现 |
 | `relink` 失效路径重映射（只算不写） | ✅ 已实现 |
+| `fetch` 算缺口、生成清单、调用外部下载命令 | ✅ 已实现 |
 | `serve` 本机 WebUI（W1 只读：设置 / 歌单 / 变更 / 体检 / 重定位预览） | ✅ 已实现 |
 | `fetch` 按配置拉取缺失曲目（外部下载工具适配） | ⬜ 未实现 |
 | `convert` 调用外部转换/解密工具 | ⬜ 未实现 |
@@ -119,6 +120,49 @@ $env:KUGOU_COOKIE   = "..."
 4. 只为**新增**曲目拉元数据，其余走本地缓存。
 
 这就是「你在 App 里改歌单，下次运行程序自动跟上」的实现方式 —— 没有推送、没有后台常驻。
+
+## 取回缺失曲目（fetch）
+
+```powershell
+# 只算缺口 + 生成清单，不下载任何东西
+python -m rb_sync fetch
+
+# 指定曲库目录（默认用配置里的 rekordbox.music_roots）
+python -m rb_sync fetch --music-root "F:\Music" --music-root "E:\Music"
+
+# 真正执行外部下载命令
+python -m rb_sync fetch --run
+```
+
+判定「本地已有」是三层匹配，越往后越松：
+
+1. 文件名能拆成 `艺人 - 曲名`，且**曲名与主艺人都对上**；
+2. 曲名作为独立词出现在文件名里（能容忍 `Song (Extended Mix).flac`），但**艺人必须也在文件名里**；
+3. 同一首有多份候选 → 记「有歧义」，不猜。
+
+> 第 2 条那个「艺人必须也在」是踩出来的：只比曲名会把 `颜人中 - My love` 错配到
+> `MK (JPN) - My Love.flac`。
+
+**本项目不下载任何内容。** `fetch --run` 调用的是你自己配置的外部命令：
+
+```json
+{
+  "fetch": {
+    "commands": {
+      "netease": "yun \"{url}\" -q 320 -o \"{out}\""
+    },
+    "out_dir": "F:\\Music\\Cloud Music\\Sync",
+    "timeout": 600
+  }
+}
+```
+
+可用占位符：`{url} {id} {name} {artists} {album} {source} {uid} {playlists} {out}`。
+
+没配置命令时是 **handoff 模式**：只把清单写到 `<state-dir>/fetch/<平台>.txt`，交给你自己的工具。
+
+增量靠 `state/fetch_state.json`：`present`（磁盘确认）与 `downloaded`（命令返回 0 但未核实）
+都会跳过；想强制重跑加 `--force`。`fetch --verify` 只重扫磁盘、不执行命令。
 
 ## 产物（全是磁盘上的 JSON，可读、可 diff、可重跑）
 

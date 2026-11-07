@@ -79,6 +79,8 @@ class Api:
             return 200, self.plan(body)
         if path == "/api/relink/preview" and method == "POST":
             return 200, self.relink_preview(body)
+        if path == "/api/fetch/plan" and method == "POST":
+            return 200, self.fetch_plan(body)
         if path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
             job = self.jobs.get(job_id)
@@ -201,3 +203,26 @@ class Api:
             return {"plan": plan.to_dict(), "out": str(out)}
 
         return {"job_id": self.jobs.submit("计算重定位映射", job)}
+
+    def fetch_plan(self, body: dict) -> dict:
+        """只算缺口并写清单 —— 不执行任何下载命令（执行留给 CLI 的 --run）。"""
+        settings = load_settings()
+        roots = body.get("music_roots") or settings.music_roots
+        if isinstance(roots, str):
+            roots = [line.strip() for line in roots.splitlines() if line.strip()]
+        roots = [str(r) for r in (roots or [])]
+        source = body.get("source") or None
+        if source in ("auto", ""):
+            source = None
+
+        def job():
+            plan = services.fetch_plan(self.state_dir, roots, source)
+            manifest: dict[str, str] = {}
+            if plan.missing:
+                written = services.fetch_write_manifest(plan, Path(self.state_dir) / "fetch")
+                manifest = {k: str(v) for k, v in written.items()}
+            payload = plan.to_dict()
+            payload["manifest"] = manifest
+            return payload
+
+        return {"job_id": self.jobs.submit("计算下载清单", job)}

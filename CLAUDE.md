@@ -5,8 +5,8 @@
 
 - 最近更新：**2026-11-06**
 - 最新提交：`git log -1 --oneline`（本文件不写死自己的哈希，否则每次提交都会自我矛盾）
-- 代码版本：`rb-sync 0.4.0`
-- 测试基线：`54` 个离线单测全过
+- 代码版本：`rb-sync 0.5.0`
+- 测试基线：`73` 个离线单测全过
 
 ---
 
@@ -14,7 +14,7 @@
 
 - **是什么**：把网易云 / QQ音乐 / 酷狗的歌单，同步成 Rekordbox 里的同名 playlist —— 一个**编排器**。
 - **不是什么**：不是下载器、不是 NCM 解密工具、不是一站式一键工具。
-- **到哪了**：**读的一半已通**（`plan` / `doctor` / `relink` + W1 只读 WebUI），**写的一半（`write`）一行没写**。
+- **到哪了**：**读 + 取的一半已通**（`plan` / `fetch` / `doctor` / `relink` + W1 只读 WebUI），**写库（`write`）一行没写**。
 - **唯一硬阻塞**：Rekordbox 启动时打开的是 `F:` 那份 1,231 首的库，还是 `%APPDATA%` 那份 8 首的旧库？这个不确认，写库可能写进一份 RB 根本不看的文件。
 - **下一步**：`relink --apply` → `write --dry-run` → `write --apply`。
 
@@ -24,7 +24,7 @@
 
 1. **完整读本文件**（不是扫一眼）。
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
-3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `54 tests OK`。
+3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `73 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
    - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
    - `F:\PIONEER\Master\master.db`（或实际路径）可读；
@@ -68,7 +68,7 @@
 | # | 需求 | 状态 |
 |---|---|---|
 | **R1** | 多平台歌单只读读取（网易云 / QQ / 酷狗 / 本地 CSV-JSON），链接自动识别平台 | ✅ |
-| **R2** | 多歌单归属映射：一首歌可属多个歌单，持久化 `track → [playlist…]`，支持增量 | ⬜ |
+| **R2** | 多歌单归属映射：一首歌可属多个歌单，持久化 `track → [playlist…]`，支持增量 | 部分 ✅（`fetch` 已产出「曲目 → 歌单」映射；写库侧未接） |
 | **R3** | 曲目身份对齐：磁盘文件 ↔ Rekordbox collection 的 `DjmdContent`（文件 ≠ 曲目） | ⬜ |
 | **R4** | 安全写入：进程检测 → 备份 → dry-run → 幂等写入 → 完整性校验 → 失败回滚 | ⬜ |
 | **R5** | 手动指定库路径与曲库目录；本机 WebUI 可视化操作 | W1 ✅ / W2 ⬜ |
@@ -142,22 +142,24 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 
 ## 7. 当前进度
 
-### 7.1 已实现（`plan` / `doctor` / `relink` / `serve`）
+### 7.1 已实现（`plan` / `fetch` / `doctor` / `relink` / `serve`）
 
 | 命令 | 作用 | 是否碰库 |
 |---|---|---|
 | `rb-sync plan` | 读歌单 → 选择配置 + 快照 + 变更检测 | 否 |
+| `rb-sync fetch` | 算缺口（曲目→歌单映射）、生成清单、调用**用户配置的**外部下载命令 | 否 |
 | `rb-sync doctor` | 库体检：曲目/歌单树/缺失分布/完整性 | 只读副本 |
 | `rb-sync relink` | 失效路径重映射（**只算不写**） | 只读副本 |
-| `rb-sync serve` | 本机 WebUI（W1：设置/歌单/变更/体检/重定位预览） | 只读副本 |
+| `rb-sync serve` | 本机 WebUI（设置/歌单/变更/下载清单/体检/重定位预览） | 只读副本 |
 
 验证过的数字（2026-10-28，库在 F: 时）：
 
 ```
 doctor    → 1,231 首 / 47 个歌单 / integrity ok / 843 在 / 338 缺失
 relink    → 306 可映射（root_remap 252 + basename 32 + basename_ext 22），32 未匹配，0 歧义
+fetch     → 热歌榜 200 首：本地已有 0 / 缺失 200 → 清单 200 行（handoff 模式）
 web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
-单测      → 54 个全过（venv 与裸系统 Python 各一遍）
+单测      → 73 个全过（venv 与裸系统 Python 各一遍）
 ```
 
 ### 7.2 W1 已提交（2026-11-06）
@@ -176,7 +178,7 @@ web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
 | W2-2 | `write --dry-run`：算 playlist 增删计划 | collection 对齐 |
 | W2-3 | `write --apply`：建 playlist + 插成员 | W2-1/2 |
 | MVP-2 | 磁盘扫描 → collection 匹配 → `track→[playlist]` 归属表 | — |
-| 后续 | `fetch` / `convert` 外部工具适配 | — |
+| 后续 | `convert` 外部工具适配（转码/解密提示） | — |
 
 ---
 
@@ -201,6 +203,10 @@ web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
 
 # 读歌单（零依赖，系统 python 也行）
 python -m rb_sync plan --playlist "https://music.163.com/playlist?id=xxx"
+
+# 算缺口 / 执行外部下载命令（项目不下载，只调用你配置的命令）
+python -m rb_sync fetch
+python -m rb_sync fetch --run --command netease='yun "{url}" -o "{out}"'
 
 # 库体检 / 重定位（需要 pyrekordbox）
 python -m rb_sync doctor  --db "F:\PIONEER\Master\master.db"
@@ -234,6 +240,10 @@ rb_sync/
 ├── mapping/
 │   ├── diff.py    快照差异：新增/移除/重排/改名/变灰
 │   └── match.py   跨平台对齐：normalize / track_key / same_track（不合并 Remix/Live）
+├── downloader/    fetch 阶段：缺口计算、清单、外部命令适配、增量状态
+│   ├── plan.py    曲目→歌单映射、三层匹配（文件名校验艺人）、缺失清单
+│   ├── runner.py  命令模板渲染 + subprocess（只调用用户命令，不下载）
+│   └── state.py   fetch_state.json：present / downloaded / failed
 ├── rekordbox/
 │   ├── library.py 只读打开库（永远用副本）+ 进程检测 + integrity_check
 │   └── relink.py  路径重映射纯计算：root_remap / basename / basename_ext / 歧义
@@ -268,7 +278,10 @@ docs/
 3. **盘符漂移**：`E:` 被内置 SSD 占用后，移动硬盘变成 `F:`，库里 332 首路径全部失效。任何地方都不要写死盘符。
 4. **`.cache` 副本残留**：SQLAlchemy 会短暂占用文件句柄，`Library.close()` 里已加 `gc.collect()`，并在下次打开时清理残留。
 5. **快捷方式失效**：桌面 `rekordbox 7.lnk` 指向 `C:\Program Files (x86)\rekordbox 7.2.14`（不存在），实际是 `D:\rekordbox 7.2.14`。
-6. **本机只有 C/D/E 三块固定盘 + 一块可插拔 WD**；2026-11-06 时 WD 未挂载，因此**当前无法读真库**，任何涉及库的验证会失败。
+6. **本机只有 C/D/E 三块固定盘 + 一块可插拔 WD**；盘是否挂载随缘，涉及库的验证先查 `F:\PIONEER\Master\master.db` 是否存在。
+7. **外部命令输出不能假定编码**。中文 Windows 默认 cp936，但工具常写 UTF-8；`subprocess.run(text=True)` 不指定编码会在读取线程里抛 `UnicodeDecodeError`（2026-11-06 踩过）。`downloader/runner.py` 已固定 `encoding="utf-8", errors="replace"`。**自己写临时脚本时同样要加。**
+8. **只比曲名会错配**。`颜人中 - My love` 曾匹配到 `MK (JPN) - My Love.flac`。现在的规则：第二层匹配要求**艺人也在文件名里**，且曲名按词边界比（`Love` 不命中 `Lovely`）。`tests/test_fetch.py` 里有回归用例。
+9. **PowerShell 传含引号的参数给 Python 会掉引号**。用 `--command 'netease=tool "{url}"'` 这类模板做端到端测试时，改用 Python 脚本直接调 `services.fetch_run(commands=...)`，别在 PowerShell 里拼。
 
 ---
 
@@ -309,3 +322,4 @@ docs/
 | 2026-10-28 | `3070323` | 补 `docs/FLOW.md` 十步业务流程图 |
 | 2026-10-28 | W1 提交 | W1 只读 WebUI（`services.py` 抽取、`web/`、结构化配置、54 单测、18 项 HTTP 冒烟） |
 | 2026-11-06 | W1 提交 | 建立 `CLAUDE.md`：需求、技术路线、进度、硬约束、已知坑、DoR/DoD |
+| 2026-11-06 | 本次提交 | `fetch`：缺口计算（含多歌单归属）、三层匹配、清单、外部命令适配、增量状态、WebUI 下载页；73 单测 |

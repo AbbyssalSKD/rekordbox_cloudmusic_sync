@@ -16,6 +16,20 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 2
 
+# 「什么算音频文件」的唯一定义：扫描曲库、重定位、下载核对都用这一份
+AUDIO_SUFFIXES = (
+    ".mp3",
+    ".flac",
+    ".wav",
+    ".aiff",
+    ".aif",
+    ".m4a",
+    ".ogg",
+    ".opus",
+    ".mp4",
+    ".ncm",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class TrackRef:

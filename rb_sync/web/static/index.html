@@ -19,6 +19,7 @@
   <button class="tab active" data-tab="settings">设置</button>
   <button class="tab" data-tab="playlists">歌单</button>
   <button class="tab" data-tab="changes">变更</button>
+  <button class="tab" data-tab="fetch">下载</button>
   <button class="tab" data-tab="library">库体检</button>
   <button class="tab" data-tab="relink">重定位</button>
 </nav>
@@ -94,6 +95,21 @@
     <h2>变更预览</h2>
     <p class="hint">与上一次快照对比的结果。首次读取会显示全部曲目。</p>
     <div id="changes-result" class="panel empty">先在「歌单」里读取一次。</div>
+  </section>
+
+  <!-- 下载清单 -->
+  <section class="view" id="view-fetch">
+    <h2>下载清单</h2>
+    <p class="hint">
+      对比「选择配置里的曲目」和「曲库目录里已有的文件」，算出还缺哪些。
+      这里只生成清单，<b>不会下载任何东西</b>；执行要回到命令行
+      <code>rb-sync fetch --run</code>，并且需要你先在配置里填好各平台的下载命令。
+    </p>
+    <div class="row">
+      <button class="primary" id="btn-fetch-plan">算出缺口</button>
+      <span class="hint inline">扫描曲库目录，可能几秒</span>
+    </div>
+    <div id="fetch-result" class="panel empty">还没算过。</div>
   </section>
 
   <!-- 库体检 -->
