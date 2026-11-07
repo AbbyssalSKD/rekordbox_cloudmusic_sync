@@ -292,6 +292,15 @@ docs/
 11. **后处理钩子只是"跑一条你给的命令"**。`fetch.post_command` 对「只有加密容器」的曲目逐条执行，占位符里有 `{file}`。仓库不内置任何解密实现，也不在文档里给可直接复制的解密命令 —— 包装脚本放仓库外。
 12. **手改 `config.local.json` 少个逗号 = 一切看起来都坏了**。以前 `load_settings()` 解析失败会**静默回退默认值**（库路径空、曲目目录空），界面表现就是"什么都没配、功能全废"（2026-11-06 真实发生）。现在：`config_error()` 会带回具体行列；`probe` 第一条就报红；Web 顶栏显示「配置文件有误（已回退默认值）」；`update_settings` 拒绝往坏配置上写。**改配置后先看顶栏有没有红标。**
 13. **`previous_roots` ≠ 扫描目录**。它存的是**库里记录的旧路径前缀**（现在是 `E:/Music`）。用户说"忘掉 E 盘"指的是不再扫 `E:\Music`，但旧根必须留着，否则 relink 没有"从哪映射"的依据。
+14. **用户说"不要"就是不要，别自行抢救**。2026-11-06 用户说 E 盘的 `.ncm` 不要了，我仍把 3.88 GB 拷到 `F:\ncm_inbox`，被要求删掉；还替他做了个启动 bat，也被说多此一举（本地 `index.html` 双击即可）。**先按字面执行；想多做一步先问。**
+15. **Unlock Music 的两个 GitHub 仓库都已被 DMCA 下架**（2022-11-04 的 QQ 音乐通知）：`unlock-music/cli` 与 `ix64/unlock-music` 均返回 *Repository unavailable due to DMCA takedown*，`git ls-remote` 直接 403。→ **不要再去 GitHub 找 CLI 版**；也不去镜像站代取。用户本地 `D:\Unlock_Music` 那份网页版是磁盘文件，不受影响。
+16. **`.cmd` / `.bat` 必须写成纯 ASCII**。cmd.exe 按 ANSI(cp936) 读批处理，UTF-8 的中文注释会被解析成乱码命令，整个脚本语法崩掉（2026-11-06 踩过）。要么全英文，要么用 GBK 编码保存。
+17. **当前解密工具链（全部在仓库之外）**：
+    - `D:\ncmpp\`：`git clone` 的 [Majjcom/ncmpp](https://github.com/Majjcom/ncmpp)（C++，121★）
+    - `D:\ncmpp\bin\ncmpp.exe`：v1.1.0 release 预编译（478 KB）
+    - `D:\ncmpp\decrypt_one.cmd`：我写的单文件包装（见下）
+    - `config.local.json` 的 `fetch.post_command` 已指向它
+    - ⚠️ **尚未用真实 `.ncm` 验证解密是否成功**（只验证了二进制能启动、输出命名规则、失败路径）
 
 ---
 
@@ -336,3 +345,5 @@ docs/
 | 2026-11-06 | 本次提交 | `fetch`：缺口计算（含多歌单归属）、三层匹配、清单、外部命令适配、增量状态、WebUI 下载页；73 单测 |
 | 2026-11-06 | 本次提交 | 加密容器单独成档（不再误判为已有）+ 通用后处理钩子 `fetch.post_command`；78 单测 |
 | 2026-11-06 | 本次提交 | 弃用 E 盘（只扫 `F:\Music`）：relink 重算 338→284；配置解析失败不再静默回退；WebUI 版本/配置红标；80 单测 |
+| 2026-11-06 | 文档 | 实测确认 `unlock-music/cli` 与 `ix64/unlock-music` 均被 DMCA 下架 |
+| 2026-11-06 | 未提交（仅配置） | 接入 `Majjcom/ncmpp`（D:\ncmpp + 包装脚本 decrypt_one.cmd），`fetch.post_command` 已配置；仓库代码未改动 |
