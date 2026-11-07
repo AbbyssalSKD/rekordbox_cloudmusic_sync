@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rb-sync · Rekordbox 曲库同步</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span> rb-sync <small>W1 只读</small></div>
+  <div class="chips">
+    <span id="chip-db" class="chip muted">库：检查中…</span>
+    <span id="chip-rb" class="chip muted">Rekordbox：检查中…</span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="settings">设置</button>
+  <button class="tab" data-tab="playlists">歌单</button>
+  <button class="tab" data-tab="changes">变更</button>
+  <button class="tab" data-tab="library">库体检</button>
+  <button class="tab" data-tab="relink">重定位</button>
+</nav>
+
+<main>
+  <!-- 设置 -->
+  <section class="view active" id="view-settings">
+    <h2>设置</h2>
+    <p class="hint">
+      库路径与曲库目录都可以手动指定。盘符会变（这块移动硬盘从 E: 变成过 F:），所以不写死。
+      没有配置好库路径时，体检与重定位会明确报错，而不是猜一个默认值。
+    </p>
+
+    <label class="field">
+      <span>Rekordbox 数据库（master.db）</span>
+      <input id="db-path" type="text" spellcheck="false" placeholder="F:\PIONEER\Master\master.db">
+    </label>
+
+    <label class="field">
+      <span>曲库目录（每行一个，用于曲目匹配与重定位搜索）</span>
+      <textarea id="music-roots" rows="3" spellcheck="false" placeholder="F:\Music&#10;E:\Music"></textarea>
+    </label>
+
+    <label class="field">
+      <span>旧路径根（重定位默认填充；每行一个）</span>
+      <textarea id="previous-roots" rows="2" spellcheck="false" placeholder="E:/Music"></textarea>
+    </label>
+
+    <div class="row">
+      <button class="primary" id="btn-save">保存设置</button>
+      <button id="btn-probe">探测环境</button>
+      <span class="hint inline" id="settings-note"></span>
+    </div>
+
+    <div id="probe-result" class="panel empty">点「探测环境」检查库是否能打开、曲库目录是否可用。</div>
+  </section>
+
+  <!-- 歌单 -->
+  <section class="view" id="view-playlists">
+    <h2>读取歌单</h2>
+    <p class="hint">
+      每行一个：网易云 / QQ音乐 / 酷狗的<b>歌单链接</b>，或本地 .csv / .json 路径。
+      纯数字 ID 必须在下面就选平台。
+    </p>
+
+    <label class="field">
+      <span>歌单链接</span>
+      <textarea id="playlist-input" rows="4" spellcheck="false"
+        placeholder="https://music.163.com/playlist?id=3778678&#10;https://y.qq.com/n/ryqq/playlist/7707261125&#10;https://www.kugou.com/yy/special/single/1063852.html"></textarea>
+    </label>
+
+    <div class="row">
+      <label class="field compact">
+        <span>平台</span>
+        <select id="source">
+          <option value="auto">自动识别</option>
+          <option value="netease">网易云</option>
+          <option value="qq">QQ音乐</option>
+          <option value="kugou">酷狗</option>
+          <option value="local">本地文件</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="opt-refresh"> 忽略缓存，重新拉元数据</label>
+      <label class="check"><input type="checkbox" id="opt-append"> 追加到已有选择（默认替换）</label>
+      <button class="primary" id="btn-plan">读取</button>
+    </div>
+
+    <div id="plan-result" class="panel empty">还没读取。</div>
+  </section>
+
+  <!-- 变更 -->
+  <section class="view" id="view-changes">
+    <h2>变更预览</h2>
+    <p class="hint">与上一次快照对比的结果。首次读取会显示全部曲目。</p>
+    <div id="changes-result" class="panel empty">先在「歌单」里读取一次。</div>
+  </section>
+
+  <!-- 库体检 -->
+  <section class="view" id="view-library">
+    <h2>库体检</h2>
+    <p class="hint">
+      只读：程序会把 master.db 复制到 <code>state/.cache/</code> 再打开，真库一个字节都不动。
+    </p>
+    <div class="row">
+      <button class="primary" id="btn-library">体检</button>
+      <span class="hint inline">首次打开约需 1–3 秒（1,200+ 首的库）</span>
+    </div>
+    <div id="library-result" class="panel empty">还没体检。</div>
+  </section>
+
+  <!-- 重定位 -->
+  <section class="view" id="view-relink">
+    <h2>路径重定位（只算不写）</h2>
+    <p class="hint">
+      盘符变了以后，库里的绝对路径会失效。这里先算出「旧路径 → 新路径」的映射表，
+      逐条可核对；写回库要等 W2。
+    </p>
+
+    <div class="grid2">
+      <label class="field">
+        <span>旧根（库里记录的）</span>
+        <input id="from-root" type="text" spellcheck="false" placeholder="E:/Music">
+      </label>
+      <label class="field">
+        <span>新根（文件现在所在）</span>
+        <input id="to-root" type="text" spellcheck="false" placeholder="F:/Music">
+      </label>
+    </div>
+
+    <label class="field">
+      <span>额外搜索目录（每行一个；找不到时按同名文件匹配）</span>
+      <textarea id="search-roots" rows="2" spellcheck="false" placeholder="F:\Music&#10;E:\Music"></textarea>
+    </label>
+
+    <div class="row">
+      <button class="primary" id="btn-relink">生成映射</button>
+      <span class="hint inline">不修改任何文件</span>
+    </div>
+
+    <div id="relink-result" class="panel empty">还没生成。</div>
+  </section>
+</main>
+
+<footer class="jobbar">
+  <span id="job-status" class="muted">就绪</span>
+</footer>
+
+<script>window.__RB_TOKEN__ = "__TOKEN_VALUE__";</script>
+<script src="/app.js"></script>
+</body>
+</html>

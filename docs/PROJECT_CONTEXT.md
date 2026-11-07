@@ -3,7 +3,9 @@
 > 这是从既有对话 PDF 中提取并经结构化整理的项目背景，作为本仓库的起始上下文。
 > 目标对象是**网易云音乐（NetEase Cloud Music）**；仓库/目录名为
 > `rekordbox_cloudmusic_sync`（拼写正确，PDF 中出现的 `couldmusic` 是笔误）。
-> 代码落地的当前进度见根目录 `README.md`。
+>
+> **本文只记录"为什么这么做"的历史背景。当前进度、硬约束与下一步，以根目录
+> [CLAUDE.md](../CLAUDE.md) 为准（开工前必读）。**
 
 ## 1. 背景与痛点
 
@@ -175,6 +177,15 @@ F:\PIONEER\Master\master.db     11,038,720 B   最后写入 2026-10-26 23:32:48
 3. **缺失文件暂缓处理**：338 首缺失里，306 首已算出重定位映射（见 `state/relink_plan.json`：
    root_remap 252 / basename 32 / basename_ext 22），剩 32 首（全部 Maozon 专辑）全盘确实不存在。
    **本轮不追这 32 首，也不执行 `--apply`。**
+4. **交互形态**：核心仍是 CLI；另加一个**本机 WebUI**（`rb-sync serve`），
+   用 `http.server` + 原生 HTML/JS，零构建链。设计见 `docs/WEBUI.md`。
+   - 允许用户手动指定 `master.db` 路径与曲库目录（盘符会变，绝不能写死）。
+   - 配置落在 `config.local.json`（已 gitignore）：`rekordbox.db_path`、
+     `rekordbox.music_roots`、`paths.previous_roots`。
+   - 服务层已抽出（`services.py`），CLI 与 Web 共用同一份逻辑。
+   - **W1（只读界面）已实现**：设置 / 探测 / 读歌单 / 变更预览 / 库体检 / 重定位预览。
+   - W2（`relink --apply` 与 `write`）仍未实现。
+   - Web 不是硬依赖：`serve` 起不来不影响任何 CLI 命令。
 
 ### 未解开的疑问（恢复工作时的第一件事）
 

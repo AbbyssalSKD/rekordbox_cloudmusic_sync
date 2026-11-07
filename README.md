@@ -1,5 +1,8 @@
 # rekordbox_cloudmusic_sync
 
+> **开工前先读 [CLAUDE.md](CLAUDE.md)** —— 需求、技术路线、当前进度、硬约束与已知坑都在那里。
+> 任何新会话（人或 AI）在动手之前都应该先读一遍。
+
 把**任意平台的歌单**同步进 **Rekordbox** 离线曲库的编排器。
 
 一句话定位：以歌单为唯一事实来源，把它翻译成 Rekordbox 里同名 playlist 的成员关系，
@@ -29,6 +32,7 @@
 | `plan` 多平台读取歌单 → 选择配置 + 快照 + 变更检测 | ✅ 已实现 |
 | `doctor` 库体检（只读，永远操作副本） | ✅ 已实现 |
 | `relink` 失效路径重映射（只算不写） | ✅ 已实现 |
+| `serve` 本机 WebUI（W1 只读：设置 / 歌单 / 变更 / 体检 / 重定位预览） | ✅ 已实现 |
 | `fetch` 按配置拉取缺失曲目（外部下载工具适配） | ⬜ 未实现 |
 | `convert` 调用外部转换/解密工具 | ⬜ 未实现 |
 | `write` 生成映射并写入 Rekordbox playlist | ⬜ 未实现 |
@@ -56,6 +60,16 @@ python -m rb_sync plan --source kugou --playlist 1063852
 pip install -e .
 rb-sync plan --playlist 1063852 --source kugou
 ```
+
+### 图形界面
+
+```powershell
+python -m rb_sync serve          # 默认 http://127.0.0.1:8765，自动开浏览器
+python -m rb_sync serve --no-browser --port 8766
+```
+
+W1 阶段只读：设置库路径与曲库目录、读歌单、看变更、库体检、重定位预览。
+写库要等 W2。界面只监听本机，所有 API 都要一次性令牌（防止别的网页偷偷调用）。
 
 输出：
 
@@ -185,7 +199,8 @@ collection。
 rb_sync/
 ├── model.py             # 领域模型 = 中间产物 schema（TrackRef / PlaylistSnapshot / Selection）
 ├── state.py             # 本地状态库（快照 + 选择配置）
-├── config.py            # 各平台 Cookie
+├── config.py            # 配置：Cookie / 库路径 / 曲库目录
+├── services.py          # 业务逻辑，CLI 与 Web 共用
 ├── sources/
 │   ├── base.py          # Source 协议 + HttpSource + content_hash + assemble
 │   ├── netease.py       # 网易云
@@ -199,6 +214,7 @@ rb_sync/
 ├── rekordbox/
 │   ├── library.py       # 只读打开库（永远操作副本）+ Rekordbox 进程检测
 │   └── relink.py        # 失效路径重映射（纯计算，可单测）
+├── web/                 # 本机 WebUI：server / api / jobs / static（W1 只读）
 └── cli/
     └── main.py          # rb-sync plan / doctor / relink ...
 tests/                   # 离线单元测试

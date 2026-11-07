@@ -5,6 +5,6 @@
 网易云 / QQ音乐 / 酷狗 / 本地 CSV-JSON。
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = ["__version__"]

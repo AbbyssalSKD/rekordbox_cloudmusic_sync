@@ -18,11 +18,9 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from ..config import load_cookie
-from ..mapping.diff import diff_snapshots
-from ..model import Selection, dump_json
-from ..sources import SourceError, build_source, detect, display_name, source_names
-from ..state import DEFAULT_STATE_DIR, StateStore, now_iso
+from .. import services
+from ..sources import SourceError, display_name, source_names
+from ..state import DEFAULT_STATE_DIR, StateStore
 
 MAX_LISTED = 20
 
@@ -56,136 +54,52 @@ def _truncate(text: str, width: int) -> str:
 # ------------------------------------------------------------------ plan
 
 
-def _resolve_targets(args: argparse.Namespace) -> list[tuple[str, str]]:
-    """把 --playlist 的每一项解析成 (源名, 原始输入)。"""
-    targets: list[tuple[str, str]] = []
-    for raw in args.playlist:
-        source_name = args.source or detect(raw)
-        if source_name is None:
-            if raw.strip().isdigit():
-                raise SourceError(
-                    f"{raw!r} 是纯数字 ID，三个平台之间会有歧义。\n"
-                    f"  请直接粘贴歌单链接（推荐），或加 --source "
-                    f"{'/'.join(n for n in source_names() if n != 'local')}"
-                )
-            raise SourceError(
-                f"无法识别 {raw!r} 属于哪个平台。请粘贴歌单链接，"
-                f"或改用 --source {source_names()[0]} 显式指定"
-            )
-        targets.append((source_name, raw))
-    return targets
-
-
 def cmd_plan(args: argparse.Namespace) -> int:
     store = StateStore(args.state_dir)
 
     try:
-        targets = _resolve_targets(args)
+        result = services.run_plan(
+            args.playlist,
+            forced_source=args.source,
+            name=args.name,
+            state_dir=args.state_dir,
+            refresh=args.refresh,
+            append=args.append,
+            cookie=args.cookie,
+            timeout=args.timeout,
+            interval=args.interval,
+        )
     except SourceError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
 
-    if not targets:
-        print("错误：至少需要一个 --playlist", file=sys.stderr)
-        return 2
-
-    if args.name and len(targets) != 1:
-        print("错误：--name 只能用于单个 --playlist", file=sys.stderr)
-        return 2
-
-    adapters: dict[str, object] = {}
-    report: list[dict] = []
-    playlists: list[dict] = []
-    failures = 0
-
-    for source_name, raw in targets:
-        adapter = adapters.get(source_name)
-        if adapter is None:
-            adapter = build_source(
-                source_name,
-                cookie=load_cookie(source_name, args.cookie),
-                timeout=args.timeout,
-                interval=args.interval,
-            )
-            adapters[source_name] = adapter
-
-        try:
-            playlist_id = adapter.resolve_id(raw)
-            previous = None if args.refresh else store.load_snapshot(source_name, playlist_id)
-            snapshot = adapter.fetch(
-                playlist_id, previous=previous, refresh_metadata=args.refresh
-            )
-        except SourceError as exc:
-            failures += 1
-            print(f"错误：{exc}", file=sys.stderr)
-            report.append({"source": source_name, "input": raw, "error": str(exc)})
-            continue
-
-        if args.name:
-            snapshot.name = args.name
-
-        change = diff_snapshots(previous, snapshot)
-        store.save_snapshot(snapshot)
-
-        playlists.append(
-            {
-                "source": source_name,
-                "id": snapshot.playlist_id,
-                "name": snapshot.name,
-                "track_count": snapshot.track_count,
-                "url": snapshot.url,
-                "snapshot": store.snapshot_path(source_name, snapshot.playlist_id).as_posix(),
-                "content_hash": snapshot.content_hash,
-            }
-        )
-        report.append(change.to_dict())
-
-    selection_path = None
-    replaced = 0
-    if playlists:
-        previous_selection = store.load_selection()
-        if args.append and previous_selection is not None:
-            kept = [
-                p
-                for p in previous_selection.playlists
-                if (str(p.get("source")), str(p.get("id")))
-                not in {(p2["source"], p2["id"]) for p2 in playlists}
-            ]
-            playlists = kept + playlists
-        elif previous_selection is not None:
-            new_keys = {(p["source"], p["id"]) for p in playlists}
-            replaced = sum(
-                1
-                for p in previous_selection.playlists
-                if (str(p.get("source")), str(p.get("id"))) not in new_keys
-            )
-        selection_path = store.save_selection(
-            Selection(playlists=playlists, generated_at=now_iso())
-        )
+    for item in result.errors:
+        print(f"错误：{item['error']}", file=sys.stderr)
 
     if args.json:
         print(
             json.dumps(
                 {
-                    "selection": str(selection_path) if selection_path else None,
-                    "selection_count": len(playlists),
-                    "dropped_from_previous_selection": replaced,
-                    "changes": report,
+                    "selection": str(result.selection_path) if result.selection_path else None,
+                    "selection_count": result.selection_count,
+                    "dropped_from_previous_selection": result.dropped_previous,
+                    "changes": result.report,
+                    "errors": result.errors,
                 },
                 ensure_ascii=False,
                 indent=2,
             )
         )
     else:
-        _print_report(store, report, playlists, selection_path)
-        if replaced and not args.append:
+        _print_report(store, result.report, result.playlists, result.selection_path)
+        if result.dropped_previous and not args.append:
             print()
             print(
-                f"提示：上次选择里有 {replaced} 个歌单不在本次范围内，已从选择配置中移除。"
-                "如需累加，请加 --append。"
+                f"提示：上次选择里有 {result.dropped_previous} 个歌单不在本次范围内，"
+                "已从选择配置中移除。如需累加，请加 --append。"
             )
 
-    return 0 if not failures else 1
+    return 0 if result.ok else 1
 
 
 def _print_report(
@@ -294,11 +208,10 @@ def _format_track(track: dict) -> str:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    from ..rekordbox import Library, RekordboxError, is_rekordbox_running
+    from ..rekordbox import RekordboxError, is_rekordbox_running
 
     try:
-        with Library(args.db, cache_dir=Path(args.state_dir) / ".cache") as lib:
-            report = lib.inspect()
+        report = services.inspect_library(args.db, args.state_dir)
     except RekordboxError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
@@ -359,35 +272,37 @@ def _print_doctor(report, running: bool) -> None:
 
 
 def cmd_relink(args: argparse.Namespace) -> int:
-    from ..rekordbox import Library, RekordboxError, build_plan
+    from ..rekordbox import RekordboxError
 
     try:
-        with Library(args.db, cache_dir=Path(args.state_dir) / ".cache") as lib:
-            report = lib.inspect()
+        plan, out_path = services.preview_relink(
+            args.db,
+            args.from_root,
+            args.to_root,
+            list(args.search or []),
+            state_dir=args.state_dir,
+            out=args.out,
+        )
     except RekordboxError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
 
-    missing = report.missing
-    if not missing:
+    if not plan.items:
         print("没有失效路径，无需重定位。")
         return 0
 
-    search_roots = list(args.search or [])
-    if not search_roots:
-        search_roots = [args.to_root]
-
-    plan = build_plan(missing, args.from_root, args.to_root, search_roots)
-    out_path = Path(args.out)
-    dump_json(out_path, plan.to_dict())
-
     if args.json:
-        print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"plan": plan.to_dict(), "out": str(out_path)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
-    matched = len(plan.matched)
-    print(f"失效曲目 : {len(missing)}")
-    print(f"可映射   : {matched}")
+    print(f"失效曲目 : {len(plan.items)}")
+    print(f"可映射   : {len(plan.matched)}")
     for strategy, count in sorted(plan.by_strategy().items()):
         note = "（换了扩展名，音质可能不同）" if strategy == "basename_ext" else ""
         print(f"    {strategy:<14}{count:>4}  {note}")
@@ -414,6 +329,28 @@ def cmd_relink(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from ..web.server import serve
+
+    try:
+        serve(
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+            state_dir=args.state_dir,
+        )
+    except OSError as exc:
+        print(
+            f"错误：无法启动服务（{exc}）。\n"
+            "  端口被占用时可以换一个：--port 8766",
+            file=sys.stderr,
+        )
+        return 2
+    except KeyboardInterrupt:
+        print("\n已停止。")
+    return 0
+
+
 # ------------------------------------------------------------------ argparse
 
 
@@ -422,7 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.3.0")
+    parser.add_argument("--version", action="version", version="rb-sync 0.4.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(
@@ -492,6 +429,22 @@ def build_parser() -> argparse.ArgumentParser:
     relink.add_argument("--out", default="state/relink_plan.json",
                         metavar="文件", help="重定位计划输出路径")
     relink.set_defaults(func=cmd_relink)
+
+    serve_cmd = sub.add_parser(
+        "serve",
+        help="启动本机 WebUI（W1：只读功能）",
+        description=(
+            "在本机 127.0.0.1 启动一个网页界面，用于设置库路径、读歌单、预览变更、"
+            "体检与重定位预览。当前不包含写库功能。"
+        ),
+    )
+    serve_cmd.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本机）")
+    serve_cmd.add_argument("--port", type=int, default=8765, help="端口（默认 8765）")
+    serve_cmd.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    serve_cmd.add_argument(
+        "--state-dir", default=str(DEFAULT_STATE_DIR), help=f"状态目录（默认 {DEFAULT_STATE_DIR}）"
+    )
+    serve_cmd.set_defaults(func=cmd_serve)
     return parser
 
 
