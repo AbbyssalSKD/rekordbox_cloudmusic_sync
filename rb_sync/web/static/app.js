@@ -132,6 +132,19 @@ async function probe() {
 
 async function loadStatus() {
   const st = await api("GET", "/api/status");
+  const chip = $("#chip-version");
+  const pageVersion = window.__RB_VERSION__ || "";
+  const serverVersion = st.version || "?";
+  if (pageVersion && pageVersion !== serverVersion) {
+    // 页面是从磁盘读的（新），接口是进程里的（旧）→ 说明服务没重启
+    chip.textContent = `服务是旧版 v${serverVersion}`;
+    chip.className = "chip err";
+    chip.title = `页面版本 ${pageVersion}，后端进程版本 ${serverVersion}。请关闭服务后重新启动。`;
+  } else {
+    chip.textContent = `v${serverVersion}`;
+    chip.className = "chip ok";
+    chip.title = "页面与后端版本一致";
+  }
   const db = $("#chip-db");
   if (st.db_found) {
     db.textContent = st.configured ? `库：${st.db_path}` : `库：默认位置`;

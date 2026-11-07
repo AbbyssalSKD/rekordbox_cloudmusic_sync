@@ -10,6 +10,7 @@
 <header class="topbar">
   <div class="brand"><span class="dot"></span> rb-sync <small>W1 只读</small></div>
   <div class="chips">
+    <span id="chip-version" class="chip muted">v—</span>
     <span id="chip-db" class="chip muted">库：检查中…</span>
     <span id="chip-rb" class="chip muted">Rekordbox：检查中…</span>
   </div>
@@ -162,7 +163,10 @@
   <span id="job-status" class="muted">就绪</span>
 </footer>
 
-<script>window.__RB_TOKEN__ = "__TOKEN_VALUE__";</script>
+<script>
+window.__RB_TOKEN__ = "__TOKEN_VALUE__";
+window.__RB_VERSION__ = "__APP_VERSION__";
+</script>
 <script src="/app.js"></script>
 </body>
 </html>

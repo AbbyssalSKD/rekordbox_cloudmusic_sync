@@ -22,6 +22,7 @@ from .api import Api, ApiError
 
 STATIC_DIR = Path(__file__).parent / "static"
 TOKEN_PLACEHOLDER = "__TOKEN_VALUE__"
+VERSION_PLACEHOLDER = "__APP_VERSION__"
 MAX_BODY = 1 << 20  # 1 MB，配置请求不可能更大
 
 
@@ -32,12 +33,16 @@ class App:
         self.api = Api(self.state_dir)
 
     def render_index(self) -> bytes:
+        from .. import __version__
+
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         if TOKEN_PLACEHOLDER not in html:
             raise RuntimeError(
                 f"index.html 缺少令牌占位符 {TOKEN_PLACEHOLDER}，页面将无法调用 API"
             )
-        return html.replace(TOKEN_PLACEHOLDER, self.token).encode("utf-8")
+        html = html.replace(TOKEN_PLACEHOLDER, self.token)
+        # 把服务端版本写进页面：前端可以拿它和 /api/status 比对，识别"服务没重启"
+        return html.replace(VERSION_PLACEHOLDER, __version__).encode("utf-8")
 
 
 def make_handler(app: App):
