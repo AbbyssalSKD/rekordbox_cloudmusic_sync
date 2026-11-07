@@ -301,6 +301,15 @@ docs/
     - `D:\ncmpp\decrypt_one.cmd`：我写的单文件包装（见下）
     - `config.local.json` 的 `fetch.post_command` 已指向它
     - ⚠️ **尚未用真实 `.ncm` 验证解密是否成功**（只验证了二进制能启动、输出命名规则、失败路径）
+18. **yun-playlist-downloader 实测结论（路线 A）**：
+    - 只支持**歌单 / 专辑 / 电台** URL；单曲 URL 直接 `unsupported type`（源码 `getType` 是 `url.includes(type)`）；
+    - 裸数字 id 会被当成**歌单 id**；无输出目录参数，永远下到 CWD；
+    - 文件名默认 `:name/:singer - :songName.:ext`（歌单名子目录 + 歌手 - 歌名），**正好符合我们的匹配规则**；
+    - **没 VIP cookie 时 31 首只有 3 首能下**，其余报「版权受限」；
+    - 它只按"同路径同名同大小"跳过，**会重复下载库里换个文件名已有的歌**（明明 Happy face 已存在仍下了一遍）
+      → 结论：**下到暂存目录（如 `F:\yun_inbox`）再挑，别直接下进 `F:\Music`**
+    - cookie 文件：纯文本，空行和 `//` 开头的行被忽略，其余行直接拼接成 Cookie 头，
+      所以内容就是 `MUSIC_U=...; __csrf=...` 这种；默认路径是 CWD 下的 `yun.cookie.txt`
 
 ---
 
