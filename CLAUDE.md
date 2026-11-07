@@ -59,7 +59,7 @@
 | 音乐文件 | **只用 `F:\Music`**（1,081 个音频，2026-11-06 起）。`E:\Music` 那份用户已明确弃用，**不要再把它加进曲库目录或搜索路径** |
 | 目录结构 | **由用户自己维护**。`F:\Music` 下的 `Cloud Music` / `Neon step` / `rekordbox` / `djay` / `Cyanolights` / 各种专辑目录**一律不要合并、不要搬运**（2026-11-06 用户明确说过「这几个文件夹都不需要你来修改」）。程序只负责把新下载的按 `fetch.out_dir` 放好 |
 | 未解密 | 24 个 `.ncm` 在 `E:\Music\Cloud Music\VipSongsDownload`（3.88 GB）—— 随 E 盘一起弃用；其中 12 首在 `F:\Music` 已有可播放版本，另 12 首只存在于 E |
-| Python | 系统 3.14.7（无 pyrekordbox）；项目 `.venv` 内装了 pyrekordbox 0.5.0 |
+| Python | 系统 3.14.7（无 pyrekordbox）。**运行用 `D:\rb-sync-venv`**（工作区外，装了 pyrekordbox 0.5.0 + 项目 editable）；仓库内的 `.venv` 只适合跑单测（原因见 §12.23） |
 | C 盘 | 只剩约 5.8 GB，空间紧张 —— 别往 C 盘写大文件 |
 
 ---
@@ -210,25 +210,28 @@ web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
 ## 9. 常用命令
 
 ```powershell
-# 环境（含 pyrekordbox）
+# 单测（只写 tests/_tmp，用仓库内 .venv 即可）
 .\.venv\Scripts\python.exe -m unittest discover -s tests
+
+# ★ 会写曲库的操作必须用工作区外的解释器（原因见 §12.23）
+D:\rb-sync-venv\Scripts\rb-sync.exe fetch --run-playlists
 
 # 读歌单（零依赖，系统 python 也行）
 python -m rb_sync plan --playlist "https://music.163.com/playlist?id=xxx"
 
 # 算缺口 / 执行外部下载命令（项目不下载，只调用你配置的命令）
-python -m rb_sync fetch
-python -m rb_sync fetch --run --command netease='yun "{url}" -o "{out}"'
+D:\rb-sync-venv\Scripts\rb-sync.exe fetch
+D:\rb-sync-venv\Scripts\rb-sync.exe fetch --run --command netease='yun "{url}" -o "{out}"'
 
 # 库体检 / 重定位（需要 pyrekordbox）
-python -m rb_sync doctor  --db "F:\PIONEER\Master\master.db"
-python -m rb_sync relink  --db "F:\PIONEER\Master\master.db" `
-        --from "E:/Music" --to "F:/Music" --search "F:\Music" --search "E:\Music"
+D:\rb-sync-venv\Scripts\rb-sync.exe doctor  --db "F:\PIONEER\Master\master.db"
+D:\rb-sync-venv\Scripts\rb-sync.exe relink  --db "F:\PIONEER\Master\master.db" `
+        --from "E:/Music" --to "F:/Music" --search "F:\Music"
 
 # 图形界面（仅本机 127.0.0.1）
-python -m rb_sync serve
+D:\rb-sync-venv\Scripts\rb-sync.exe serve
 
-# 或者双击仓库根目录的「启动WebUI.bat」—— 等价于上面那条，会自动开浏览器；
+# 或者双击仓库根目录的「启动WebUI.bat」—— 会自动挑 D:\rb-sync-venv 里的解释器，
 # 已在跑时不重复启动，只把浏览器打开
 
 # 编码体检（防止文件被写坏）
@@ -338,6 +341,15 @@ docs/
     都会 `PermissionError`（**不是杀软，也不是 ACL**）。所以：
     - 跨盘的真实写入要**由用户在自己的终端里跑**，agent 只能在工作区（`.tmp/`）里做端到端验证；
     - 早先那次"搬到曲库报 WinError 5"其实也混了这条，不一定全是文件锁。
+23. **决定性结论：限制是按「可执行文件所在路径」生效的**（2026-11-06 实测）。
+    同一个 `python.exe`：
+    - 放在 `D:\rekordbox_cloudmusic_sync\` 里 → 只能写工作区，写 `F:\` 报 `Permission denied`；
+    - 复制到 `C:\Users\qq415\` 下 → 写 `F:\` **正常**。
+    连 WMI 独立启动（父进程完全断开）也一样，说明不是继承，而是**路径**。
+    → **所以跑会写曲库的东西必须用工作区外的解释器**：`D:\rb-sync-venv\Scripts\python.exe`。
+    仓库里的 `.venv` 留着跑单测（只写 `tests/_tmp`）没问题，但**不能**用它跑 `fetch`。
+    这个坑第一次表现为：WebUI 点下载 → 「入库 0、清理 0、下载后缺失不变」，而 job 的
+    `failed` 里写着 `[Errno 13] Permission denied: F:\Music\Cloud Music\...flac`。
 
 ---
 
@@ -386,3 +398,4 @@ docs/
 | 2026-11-06 | 本次提交 | **0.7.0 整歌单模式**：`fetch --run-playlists` + WebUI「整歌单下载」按钮；下载→挑缺的入库→清空暂存区（保留 cookie）；`downloader/pipeline.py`；85 单测 |
 | 2026-11-06 | 本次提交 | **0.7.1 解密接入管线**：整歌单模式自动「下载→解密→挑缺的入库→清空」；解不开/没配命令的容器**永不删除**；真实 `.ncm` 验证通过（134 MB → 133.9 MB FLAC）；88 单测 |
 | 2026-11-06 | 本次提交 | `启动WebUI.bat`：双击即起本机 WebUI（已运行时只开浏览器）；文件内纯 ASCII 无 BOM |
+| 2026-11-06 | 本次提交 | **修复「下载了但入库 0」**：根因是工作区内的解释器被沙箱限制、写不了 `F:\`；改用工作区外的 `D:\rb-sync-venv`，启动器优先它。DnB 歌单实测：入库 3 首、清理 28 个、缺失 4→1 |
