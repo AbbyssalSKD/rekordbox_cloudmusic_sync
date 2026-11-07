@@ -57,6 +57,7 @@
 | APPDATA 那份库 | `%APPDATA%\Pioneer\rekordbox\master.db`，1.57 MB / **8 首**（全是自带采样），2026-06-30 之后没再动过 |
 | 移动硬盘 | WD Elements 2620，931 GB，USB。**盘符会漂移**：曾作为 `E:`，后来变成 `F:` |
 | 音乐文件 | **只用 `F:\Music`**（1,081 个音频，2026-11-06 起）。`E:\Music` 那份用户已明确弃用，**不要再把它加进曲库目录或搜索路径** |
+| 目录结构 | **由用户自己维护**。`F:\Music` 下的 `Cloud Music` / `Neon step` / `rekordbox` / `djay` / `Cyanolights` / 各种专辑目录**一律不要合并、不要搬运**（2026-11-06 用户明确说过「这几个文件夹都不需要你来修改」）。程序只负责把新下载的按 `fetch.out_dir` 放好 |
 | 未解密 | 24 个 `.ncm` 在 `E:\Music\Cloud Music\VipSongsDownload`（3.88 GB）—— 随 E 盘一起弃用；其中 12 首在 `F:\Music` 已有可播放版本，另 12 首只存在于 E |
 | Python | 系统 3.14.7（无 pyrekordbox）；项目 `.venv` 内装了 pyrekordbox 0.5.0 |
 | C 盘 | 只剩约 5.8 GB，空间紧张 —— 别往 C 盘写大文件 |
