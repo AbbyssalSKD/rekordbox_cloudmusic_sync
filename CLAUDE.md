@@ -232,8 +232,9 @@ python -m rb_sync serve
 .\.venv\Scripts\python.exe .venv\scan_encoding.py
 ```
 
-> 说明：`.venv/` 里有几个一次性脚本（`smoke_web.py`、`e2e_real.py`、`refactor_cli*.py`、`probe_*.py`），
-> 它们是开发期的验证工具，不进仓库。`scan_encoding.py` 建议保留使用。
+> 说明：`.venv/` 里现在只留 4 个开发期脚本：`scan_encoding.py`（编码体检，**建议保留**）、
+> `smoke_web.py`、`smoke_fetch_api.py`、`e2e_real.py`（冒烟）。它们不进仓库。
+> 一次性的 probe / demo / debug 脚本用完即删，别攒着（2026-11-06 清理过一次，删了 27 个）。
 
 ---
 
@@ -344,7 +345,6 @@ docs/
 3. **24 个 `.ncm` 已随 E 盘弃用**，其中 12 首在 `F:\Music` 有可播放版本、12 首只在 E。
    用户若还想要这 12 首，只能在 E 盘还在时处理（解密/另存）或以后重新下载。
 4. **19 首换扩展名的映射**（`.flac → .wav`）：需要用户确认音质可接受。
-5. 仓库根目录有个与本项目无关的 `C盘扫描报告_2026-11-05.md`，**不要提交**。
 
 ---
 
