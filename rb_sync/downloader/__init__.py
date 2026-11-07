@@ -10,6 +10,7 @@ from .plan import (
     AudioIndex,
     FetchItem,
     FetchPlan,
+    Match,
     SelectionTrack,
     build_fetch_plan,
     load_selection_tracks,
@@ -17,10 +18,20 @@ from .plan import (
     track_url,
     write_manifest,
 )
-from .runner import RunResult, RunSummary, render_command, run_items
+from .runner import (
+    POST_PLACEHOLDERS,
+    PostResult,
+    RunResult,
+    RunSummary,
+    render_command,
+    render_post,
+    run_items,
+    run_post,
+)
 from .state import FetchState
 
 __all__ = [
+    "POST_PLACEHOLDERS",
     "STRATEGY_FILENAME",
     "STRATEGY_PATH",
     "STRATEGY_TITLE",
@@ -28,13 +39,17 @@ __all__ = [
     "FetchItem",
     "FetchPlan",
     "FetchState",
+    "Match",
+    "PostResult",
     "RunResult",
     "RunSummary",
     "SelectionTrack",
     "build_fetch_plan",
     "load_selection_tracks",
     "render_command",
+    "render_post",
     "run_items",
+    "run_post",
     "scan_audio_files",
     "track_url",
     "write_manifest",

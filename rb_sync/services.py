@@ -308,18 +308,24 @@ def _sync_state_with_plan(state, plan) -> dict:
     """
     marked_present = 0
     lost = 0
+    encrypted = 0
     for item in plan.present:
         entry = state.get(item.uid) or {}
         if entry.get("status") != "present" or entry.get("path") != item.matched_path:
             state.mark(item.uid, "present", path=item.matched_path)
             marked_present += 1
+    for item in plan.encrypted:
+        # 加密容器：文件在，但不可用。标成 encrypted 让它**不被跳过**，
+        # 这样配了后处理命令时会重试（而不是因为"下载成功"就永远不再处理）。
+        state.mark(item.uid, "encrypted", path=item.matched_path)
+        encrypted += 1
     for item in plan.missing:
         entry = state.get(item.uid) or {}
         if entry.get("status") == "present":
             state.mark(item.uid, "missing")
             lost += 1
     state.save()
-    return {"marked_present": marked_present, "lost": lost}
+    return {"marked_present": marked_present, "marked_encrypted": encrypted, "lost": lost}
 
 
 def _unverified_uids(state, plan) -> list[str]:
@@ -342,6 +348,8 @@ def fetch_run(
     on_progress=None,
     commands: dict[str, str] | None = None,
     force: bool = False,
+    post_command: str | None = None,
+    on_post_progress=None,
 ) -> dict:
     """对缺失曲目调用**用户配置的外部命令**。项目本身不下载。
 
@@ -391,8 +399,30 @@ def fetch_run(
             )
     state.save()
 
-    # 跑完重扫一次：只有真的落盘才算"已确认"，其余记为待人工核对
+    # 第一次重扫：确认哪些真的落盘了（其中可能有加密容器）
     after = fetch_plan(state_dir, roots, only_source)
+
+    # 后处理：只对「只有加密容器」的曲目跑用户配置的通用命令。
+    # 项目不内置任何解密实现 —— 这里只是"跑一条你给的命令"。
+    post_template = (
+        post_command if post_command is not None else settings.fetch_post_command
+    ) or ""
+    encrypted_before = len(after.encrypted)
+    post_results: list[dict] = []
+    if post_template and after.encrypted:
+        from .downloader import run_post
+
+        results = run_post(
+            post_template,
+            after.encrypted,
+            out_dir=out,
+            timeout=per_item_timeout,
+            on_progress=on_post_progress,
+        )
+        post_results = [r.to_dict() for r in results]
+        # 后处理会改变磁盘 → 再扫一次
+        after = fetch_plan(state_dir, roots, only_source)
+
     synced = _sync_state_with_plan(state, after)
     unverified = _unverified_uids(state, after)
 
@@ -413,6 +443,12 @@ def fetch_run(
         "after": after.to_dict()["counts"],
         "state_sync": synced,
         "unverified": unverified,
+        "encrypted": {
+            "before": encrypted_before,
+            "after": len(after.encrypted),
+            "post_configured": bool(post_template),
+            "post": post_results,
+        },
     }
 
 

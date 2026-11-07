@@ -5,8 +5,8 @@
 
 - 最近更新：**2026-11-06**
 - 最新提交：`git log -1 --oneline`（本文件不写死自己的哈希，否则每次提交都会自我矛盾）
-- 代码版本：`rb-sync 0.5.0`
-- 测试基线：`73` 个离线单测全过
+- 代码版本：`rb-sync 0.6.0`
+- 测试基线：`78` 个离线单测全过
 
 ---
 
@@ -24,7 +24,7 @@
 
 1. **完整读本文件**（不是扫一眼）。
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
-3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `73 tests OK`。
+3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `78 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
    - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
    - `F:\PIONEER\Master\master.db`（或实际路径）可读；
@@ -147,7 +147,7 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 | 命令 | 作用 | 是否碰库 |
 |---|---|---|
 | `rb-sync plan` | 读歌单 → 选择配置 + 快照 + 变更检测 | 否 |
-| `rb-sync fetch` | 算缺口（曲目→歌单映射）、生成清单、调用**用户配置的**外部下载命令 | 否 |
+| `rb-sync fetch` | 算缺口（曲目→歌单映射）、生成清单、调用**用户配置的**外部下载命令；加密容器单独成档 | 否 |
 | `rb-sync doctor` | 库体检：曲目/歌单树/缺失分布/完整性 | 只读副本 |
 | `rb-sync relink` | 失效路径重映射（**只算不写**） | 只读副本 |
 | `rb-sync serve` | 本机 WebUI（设置/歌单/变更/下载清单/体检/重定位预览） | 只读副本 |
@@ -158,8 +158,9 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 doctor    → 1,231 首 / 47 个歌单 / integrity ok / 843 在 / 338 缺失
 relink    → 306 可映射（root_remap 252 + basename 32 + basename_ext 22），32 未匹配，0 歧义
 fetch     → 热歌榜 200 首：本地已有 0 / 缺失 200 → 清单 200 行（handoff 模式）
+            自建 24 首 .ncm 歌单：本地已有 0 / 缺失 0 / **待解密 24**（不再误判为已有）
 web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
-单测      → 73 个全过（venv 与裸系统 Python 各一遍）
+单测      → 78 个全过（venv 与裸系统 Python 各一遍）
 ```
 
 ### 7.2 W1 已提交（2026-11-06）
@@ -282,6 +283,8 @@ docs/
 7. **外部命令输出不能假定编码**。中文 Windows 默认 cp936，但工具常写 UTF-8；`subprocess.run(text=True)` 不指定编码会在读取线程里抛 `UnicodeDecodeError`（2026-11-06 踩过）。`downloader/runner.py` 已固定 `encoding="utf-8", errors="replace"`。**自己写临时脚本时同样要加。**
 8. **只比曲名会错配**。`颜人中 - My love` 曾匹配到 `MK (JPN) - My Love.flac`。现在的规则：第二层匹配要求**艺人也在文件名里**，且曲名按词边界比（`Love` 不命中 `Lovely`）。`tests/test_fetch.py` 里有回归用例。
 9. **PowerShell 传含引号的参数给 Python 会掉引号**。用 `--command 'netease=tool "{url}"'` 这类模板做端到端测试时，改用 Python 脚本直接调 `services.fetch_run(commands=...)`，别在 PowerShell 里拼。
+10. **`.ncm` 曾被误判成"已有"**。`.ncm` 一度在"音频后缀"清单里，于是加密文件让 fetch 认为这首已就绪，Rekordbox 却放不了。现在 `model.py` 分成 `PLAYABLE_SUFFIXES` / `ENCRYPTED_SUFFIXES`，加密容器单独一档 `encrypted`，状态记为 `encrypted`（**不会被跳过**，配了后处理就会重试）。可播放文件优先于加密文件。
+11. **后处理钩子只是"跑一条你给的命令"**。`fetch.post_command` 对「只有加密容器」的曲目逐条执行，占位符里有 `{file}`。仓库不内置任何解密实现，也不在文档里给可直接复制的解密命令 —— 包装脚本放仓库外。
 
 ---
 
@@ -323,3 +326,4 @@ docs/
 | 2026-10-28 | W1 提交 | W1 只读 WebUI（`services.py` 抽取、`web/`、结构化配置、54 单测、18 项 HTTP 冒烟） |
 | 2026-11-06 | W1 提交 | 建立 `CLAUDE.md`：需求、技术路线、进度、硬约束、已知坑、DoR/DoD |
 | 2026-11-06 | 本次提交 | `fetch`：缺口计算（含多歌单归属）、三层匹配、清单、外部命令适配、增量状态、WebUI 下载页；73 单测 |
+| 2026-11-06 | 本次提交 | 加密容器单独成档（不再误判为已有）+ 通用后处理钩子 `fetch.post_command`；78 单测 |

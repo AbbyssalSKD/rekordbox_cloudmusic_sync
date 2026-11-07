@@ -119,11 +119,12 @@ class TestMatching(unittest.TestCase):
             target = touch(music / "deadmau5 - Strobe.flac")
             index = AudioIndex.from_roots([music])
             track = SelectionTrack("netease", "1", "Strobe", ("deadmau5",))
-            hit, strategy, candidates = index.lookup(track)
-            self.assertIsNotNone(hit)
-            self.assertEqual(Path(hit.path), target)
-            self.assertEqual(strategy, "filename_artist_title")
-            self.assertEqual(candidates, 1)
+            match = index.lookup(track)
+            self.assertTrue(match.found)
+            self.assertEqual(Path(match.file.path), target)
+            self.assertEqual(match.strategy, "filename_artist_title")
+            self.assertEqual(match.candidates, 1)
+            self.assertFalse(match.encrypted)
 
     def test_title_match_requires_artist(self):
         """回归：只比曲名会把「颜人中 - My love」错配到「MK (JPN) - My Love.flac」。"""
@@ -132,8 +133,8 @@ class TestMatching(unittest.TestCase):
             touch(music / "MK (JPN) - My Love.flac")
             index = AudioIndex.from_roots([music])
             other = SelectionTrack("netease", "2", "My love", ("颜人中",))
-            hit, _, _ = index.lookup(other)
-            self.assertIsNone(hit, "艺人不同，不该判定为已有")
+            match = index.lookup(other)
+            self.assertFalse(match.found, "艺人不同，不该判定为已有")
 
     def test_title_match_with_artist_present(self):
         """原曲在，只是文件名带后缀（Extended Mix）时仍能对上。"""
@@ -142,9 +143,9 @@ class TestMatching(unittest.TestCase):
             touch(music / "Artist - Song (Extended Mix).flac")
             index = AudioIndex.from_roots([music])
             track = SelectionTrack("netease", "3", "Song", ("Artist",))
-            hit, strategy, _ = index.lookup(track)
-            self.assertIsNotNone(hit)
-            self.assertEqual(strategy, "title_in_filename")
+            match = index.lookup(track)
+            self.assertTrue(match.found)
+            self.assertEqual(match.strategy, "title_in_filename")
 
     def test_ambiguous_is_reported_not_guessed(self):
         with temp_dir() as tmp:
@@ -153,9 +154,31 @@ class TestMatching(unittest.TestCase):
             touch(music / "b" / "Artist - Song.flac")
             index = AudioIndex.from_roots([music])
             track = SelectionTrack("netease", "4", "Song", ("Artist",))
-            hit, _, candidates = index.lookup(track)
-            self.assertIsNone(hit)
-            self.assertEqual(candidates, 2)
+            match = index.lookup(track)
+            self.assertFalse(match.found)
+            self.assertEqual(match.candidates, 2)
+
+    def test_encrypted_only_is_marked_encrypted(self):
+        """.ncm 能被扫到，但**不能**算"已有"——Rekordbox 放不了它。"""
+        with temp_dir() as tmp:
+            music = tmp / "music"
+            touch(music / "Artist - Song.ncm")
+            index = AudioIndex.from_roots([music])
+            match = index.lookup(SelectionTrack("netease", "5", "Song", ("Artist",)))
+            self.assertTrue(match.found)
+            self.assertTrue(match.encrypted)
+
+    def test_playable_wins_over_encrypted(self):
+        """同一首既有 .flac 又有 .ncm 时，算已有（可播放的优先）。"""
+        with temp_dir() as tmp:
+            music = tmp / "music"
+            touch(music / "Artist - Song.ncm")
+            target = touch(music / "Artist - Song.flac")
+            index = AudioIndex.from_roots([music])
+            match = index.lookup(SelectionTrack("netease", "6", "Song", ("Artist",)))
+            self.assertTrue(match.found)
+            self.assertFalse(match.encrypted)
+            self.assertEqual(Path(match.file.path), target)
 
     def test_non_audio_files_ignored(self):
         with temp_dir() as tmp:
@@ -190,8 +213,28 @@ class TestPlanAndManifest(unittest.TestCase):
             )
             plan = build_fetch_plan(state, [music])
             counts = plan.to_dict()["counts"]
-            self.assertEqual(counts, {"total": 2, "present": 1, "missing": 1, "ambiguous": 0})
+            self.assertEqual(
+                counts,
+                {"total": 2, "present": 1, "missing": 1, "encrypted": 0, "ambiguous": 0},
+            )
             self.assertEqual(plan.missing[0].track.title, "Two")
+
+    def test_encrypted_is_its_own_bucket(self):
+        """.ncm 不算 present，也不算 missing，单独一档「待解密」。"""
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            music = tmp / "music"
+            touch(music / "Artist - Song.ncm")
+            write_selection(
+                state, [("netease", "A", "mix", [make_track("1", "Song", ("Artist",))])]
+            )
+            plan = build_fetch_plan(state, [music])
+            counts = plan.to_dict()["counts"]
+            self.assertEqual(counts["present"], 0)
+            self.assertEqual(counts["missing"], 0)
+            self.assertEqual(counts["encrypted"], 1)
+            self.assertEqual(len(plan.encrypted), 1)
+            self.assertTrue(plan.encrypted[0].matched_path.endswith(".ncm"))
 
     def test_manifest_per_source(self):
         with temp_dir() as tmp:
@@ -356,6 +399,85 @@ class TestFetchRun(unittest.TestCase):
             self.assertEqual(outcome["queued"], 1)
             self.assertEqual(outcome["per_source"]["netease"]["skipped_no_command"], 1)
             self.assertEqual(outcome["after"]["missing"], 1)
+
+
+class TestPostCommand(unittest.TestCase):
+    """后处理钩子：项目只负责"跑你给的命令"，不关心它做什么。"""
+
+    def _download_script(self, tmp: Path) -> Path:
+        script = tmp / "dl_ncm.py"
+        script.write_text(
+            "import sys, pathlib\n"
+            "out, artists, name = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "pathlib.Path(out).mkdir(parents=True, exist_ok=True)\n"
+            "pathlib.Path(out, artists + ' - ' + name + '.ncm').write_text('enc')\n",
+            encoding="utf-8",
+        )
+        return script
+
+    def test_post_command_turns_encrypted_into_present(self):
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            out = tmp / "out"
+            out.mkdir()
+            write_selection(
+                state, [("netease", "A", "mix", [make_track("7", "Seven", ("Artist",))])]
+            )
+            dl = self._download_script(tmp)
+            # 模拟"你自己的解密工具"：.ncm → .flac
+            post = tmp / "decrypt.py"
+            post.write_text(
+                "import sys, pathlib\n"
+                "f = pathlib.Path(sys.argv[1])\n"
+                "f.with_suffix('.flac').write_text('audio')\n"
+                "f.unlink()\n",
+                encoding="utf-8",
+            )
+            template = f'"{sys.executable}" "{dl}" "{{out}}" "{{artists}}" "{{name}}"'
+            post_template = f'"{sys.executable}" "{post}" "{{file}}"'
+
+            outcome = services.fetch_run(
+                state_dir=state,
+                music_roots=[str(out)],
+                out_dir=str(out),
+                commands={"netease": template},
+                post_command=post_template,
+            )
+
+            self.assertEqual(outcome["encrypted"]["before"], 1)
+            self.assertEqual(outcome["encrypted"]["after"], 0)
+            self.assertEqual(outcome["after"]["present"], 1)
+            self.assertEqual(outcome["after"]["missing"], 0)
+            self.assertTrue(outcome["encrypted"]["post"][0]["ok"])
+            self.assertFalse((out / "Artist - Seven.ncm").exists())
+            self.assertTrue((out / "Artist - Seven.flac").exists())
+
+    def test_without_post_command_encrypted_stays_pending(self):
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            out = tmp / "out"
+            out.mkdir()
+            write_selection(
+                state, [("netease", "A", "mix", [make_track("8", "Eight", ("Artist",))])]
+            )
+            dl = self._download_script(tmp)
+            template = f'"{sys.executable}" "{dl}" "{{out}}" "{{artists}}" "{{name}}"'
+
+            outcome = services.fetch_run(
+                state_dir=state,
+                music_roots=[str(out)],
+                out_dir=str(out),
+                commands={"netease": template},
+                post_command="",  # 明确不配
+            )
+
+            self.assertEqual(outcome["encrypted"]["before"], 1)
+            self.assertEqual(outcome["encrypted"]["after"], 1)
+            self.assertFalse(outcome["encrypted"]["post_configured"])
+
+            saved = json.loads((state / "fetch_state.json").read_text(encoding="utf-8"))
+            # 关键：不能被记成 downloaded，否则下次会被跳过、永远不解密
+            self.assertEqual(saved["items"]["netease:8"]["status"], "encrypted")
 
 
 if __name__ == "__main__":

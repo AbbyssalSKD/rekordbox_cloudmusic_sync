@@ -157,3 +157,113 @@ def run_items(
         summary.results.append(result)
 
     return summary
+
+
+# ----------------------------------------------------------- 后处理钩子
+
+# 后处理（post_command）能用的占位符比下载命令多一个 {file}：那个待处理的文件
+POST_PLACEHOLDERS = "{file} {name} {artists} {album} {source} {uid} {playlists} {out}"
+
+
+@dataclass
+class PostResult:
+    uid: str
+    file: str
+    command: str
+    ok: bool
+    returncode: int = -1
+    stderr: str = ""
+    timed_out: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "uid": self.uid,
+            "file": self.file,
+            "command": self.command,
+            "ok": self.ok,
+            "returncode": self.returncode,
+            "stderr": self.stderr,
+            "timed_out": self.timed_out,
+        }
+
+
+def render_post(template: str, item, out_dir: str = "") -> str:
+    """渲染后处理命令：``{file}`` 是待处理文件（比如一个 .ncm）。"""
+    track = item.track
+    mapping = {
+        "file": item.matched_path or "",
+        "name": track.title,
+        "artists": track.artist_text,
+        "album": track.album,
+        "source": track.source,
+        "uid": track.uid,
+        "playlists": "、".join(track.playlists),
+        "out": out_dir,
+    }
+    text = template
+    for key, value in mapping.items():
+        text = text.replace("{" + key + "}", str(value))
+    return text
+
+
+def run_post(
+    template: str,
+    items,
+    out_dir: str = "",
+    timeout: float = 600.0,
+    on_progress=None,
+) -> list[PostResult]:
+    """对指定的文件逐个跑后处理命令。
+
+    典型用途：下载到的是加密容器，需要用**你自己的**工具处理成可播放文件。
+    这里只负责「跑你给的命令」，不关心它具体做什么。
+    """
+    results: list[PostResult] = []
+    for index, item in enumerate(items, start=1):
+        command = render_post(template, item, out_dir)
+        if on_progress:
+            on_progress(index, len(items), item, command)
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+            results.append(
+                PostResult(
+                    uid=item.uid,
+                    file=item.matched_path or "",
+                    command=command,
+                    ok=completed.returncode == 0,
+                    returncode=completed.returncode,
+                    stderr=(completed.stderr or "")[-MAX_CAPTURE:]
+                    or (completed.stdout or "")[-MAX_CAPTURE:],
+                )
+            )
+        except subprocess.TimeoutExpired:
+            results.append(
+                PostResult(
+                    uid=item.uid,
+                    file=item.matched_path or "",
+                    command=command,
+                    ok=False,
+                    stderr=f"命令超过 {timeout:.0f}s 未结束",
+                    timed_out=True,
+                )
+            )
+        except OSError as exc:
+            results.append(
+                PostResult(
+                    uid=item.uid,
+                    file=item.matched_path or "",
+                    command=command,
+                    ok=False,
+                    stderr=f"无法启动命令：{exc}",
+                )
+            )
+    return results

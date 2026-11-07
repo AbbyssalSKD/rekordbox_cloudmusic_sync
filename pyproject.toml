@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rekordbox-cloudmusic-sync"
-version = "0.5.0"
+version = "0.6.0"
 description = "Rekordbox 离线曲库同步编排器：网易云 / QQ音乐 / 酷狗 / 本地歌单 → Rekordbox playlist"
 requires-python = ">=3.11"
 dependencies = []

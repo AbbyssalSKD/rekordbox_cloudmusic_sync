@@ -16,8 +16,8 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 2
 
-# 「什么算音频文件」的唯一定义：扫描曲库、重定位、下载核对都用这一份
-AUDIO_SUFFIXES = (
+# Rekordbox 能直接播放的格式
+PLAYABLE_SUFFIXES = (
     ".mp3",
     ".flac",
     ".wav",
@@ -27,8 +27,14 @@ AUDIO_SUFFIXES = (
     ".ogg",
     ".opus",
     ".mp4",
-    ".ncm",
 )
+
+# 加密容器：**不能**当成"已有曲目"。需要用户用自己的工具解密后重新扫描。
+# 项目不内置、不调用、不托管任何解密实现（见 CLAUDE.md 的 C3）。
+ENCRYPTED_SUFFIXES = (".ncm",)
+
+# 扫描曲库时的全集（含加密文件 —— 扫描到它们只是为了提示，不是为了判定"已有"）
+AUDIO_SUFFIXES = PLAYABLE_SUFFIXES + ENCRYPTED_SUFFIXES
 
 
 @dataclass(frozen=True, slots=True)

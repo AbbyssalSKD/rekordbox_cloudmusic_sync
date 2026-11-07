@@ -292,9 +292,12 @@ function renderFetchPlan(data) {
       <div class="stat"><div class="k">歌单成员</div><div class="v">${counts.total || 0}</div></div>
       <div class="stat"><div class="k">本地已有</div><div class="v ok">${counts.present || 0}</div></div>
       <div class="stat"><div class="k">缺失</div><div class="v warn">${counts.missing || 0}</div></div>
+      <div class="stat"><div class="k">待解密</div><div class="v warn">${counts.encrypted || 0}</div></div>
       <div class="stat"><div class="k">有歧义</div><div class="v err">${counts.ambiguous || 0}</div></div>
     </div>
     <p class="hint mono">曲库目录：${esc((data.music_roots || []).join(" , ") || "（未设置）")}</p>
+    ${counts.encrypted ? `<p class="hint warn">有 ${counts.encrypted} 首只有加密容器（如 .ncm），Rekordbox 放不了。
+      配好 <code>fetch.post_command</code> 后跑 <code>rb-sync fetch --run</code>，或自己解密后跑 <code>fetch --verify</code>。</p>` : ""}
     ${sourceRows ? `<table><thead><tr><th>平台</th><th>缺失</th><th>清单文件</th></tr></thead><tbody>${sourceRows}</tbody></table>` : ""}
     ${sample ? `<details open><summary>缺失曲目（前 12 条）</summary>
       <table><thead><tr><th>曲名</th><th>艺人</th><th>所属歌单</th></tr></thead><tbody>${sample}</tbody></table></details>` : ""}

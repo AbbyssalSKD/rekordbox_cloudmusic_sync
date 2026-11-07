@@ -31,6 +31,8 @@ class Settings:
     state_dir: str = "state"
     # fetch 阶段：每个平台一条外部下载命令模板（项目本身不下载）
     fetch_commands: dict[str, str] = field(default_factory=dict)
+    # 下载成功后的通用后处理（例如用你自己的工具把加密容器转成可播放文件）
+    fetch_post_command: str = ""
     fetch_out_dir: str = ""
     fetch_timeout: int = 600
     netease_cookie: str = ""
@@ -60,6 +62,7 @@ class Settings:
             "state_dir": self.state_dir,
             "fetch": {
                 "commands": dict(self.fetch_commands),
+                "post_command": self.fetch_post_command,
                 "out_dir": self.fetch_out_dir,
                 "timeout": self.fetch_timeout,
             },
@@ -90,6 +93,7 @@ class Settings:
             previous_roots=[str(p) for p in previous_roots if p],
             state_dir=str(data.get("state_dir") or "state"),
             fetch_commands={str(k): str(v) for k, v in commands.items() if v},
+            fetch_post_command=str(fetch.get("post_command") or ""),
             fetch_out_dir=str(fetch.get("out_dir") or ""),
             fetch_timeout=int(fetch.get("timeout") or 600),
             netease_cookie=str(data.get("netease_cookie") or ""),
@@ -163,6 +167,8 @@ def update_settings(patch: dict[str, Any], path: str | Path = CONFIG_LOCAL) -> S
                     else:
                         merged.pop(str(source), None)  # 传空字符串 = 删除该平台的命令
                 current.fetch_commands = merged
+            if "post_command" in value:
+                current.fetch_post_command = str(value["post_command"] or "")
             if "out_dir" in value:
                 current.fetch_out_dir = str(value["out_dir"] or "")
             if value.get("timeout"):

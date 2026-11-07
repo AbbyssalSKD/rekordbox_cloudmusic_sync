@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..mapping.match import contains_words, normalize, normalize_words, track_key
-from ..model import AUDIO_SUFFIXES, PlaylistSnapshot, load_json
+from ..model import AUDIO_SUFFIXES, ENCRYPTED_SUFFIXES, PlaylistSnapshot, load_json
 from ..state import StateStore
 
 # 匹配策略（由强到弱，便于解释和人工复核）
@@ -136,6 +136,8 @@ class AudioFile:
     title_norm: str  # 归一化后的曲名
     stem_norm: str = ""  # 整个文件名的归一化形式（去标点），用于查艺人
     stem_words: str = ""  # 保留词边界的归一化形式，用于查曲名
+    # True 表示加密容器（如 .ncm）：能被扫到，但**不能**算"已有曲目"
+    encrypted: bool = False
 
 
 def _split_stem(stem: str) -> tuple[str, str]:
@@ -147,7 +149,7 @@ def _split_stem(stem: str) -> tuple[str, str]:
 
 
 def scan_audio_files(roots: list[str | Path]) -> list[AudioFile]:
-    """扫曲库目录，返回所有音频文件及其可比较的键。"""
+    """扫曲库目录，返回所有音频文件（含加密容器，后者带 ``encrypted`` 标记）。"""
     files: list[AudioFile] = []
     seen: set[str] = set()
     for root in roots:
@@ -170,13 +172,28 @@ def scan_audio_files(roots: list[str | Path]) -> list[AudioFile]:
                     title_norm=normalize(title),
                     stem_norm=normalize(path.stem),
                     stem_words=normalize_words(path.stem),
+                    encrypted=path.suffix.lower() in ENCRYPTED_SUFFIXES,
                 )
             )
     return files
 
 
+@dataclass
+class Match:
+    """一次匹配的结果。分成"可播放"和"加密容器"两种，语义完全不同。"""
+
+    file: AudioFile | None = None
+    strategy: str = ""
+    candidates: int = 0
+    encrypted: bool = False
+
+    @property
+    def found(self) -> bool:
+        return self.file is not None
+
+
 class AudioIndex:
-    """按两种键索引文件，用于把曲目判定为「本地已有」。"""
+    """按两种键索引文件，用于把曲目判定为「本地已有 / 只有加密文件」。"""
 
     def __init__(self, files: list[AudioFile]) -> None:
         self.files = files
@@ -192,39 +209,48 @@ class AudioIndex:
     def from_roots(cls, roots: list[str | Path]) -> "AudioIndex":
         return cls(scan_audio_files(roots))
 
-    def lookup(self, track: SelectionTrack) -> tuple[AudioFile | None, str, int]:
-        """返回 (命中文件, 策略, 候选数)。多命中时文件为 None，交给人工。
+    def lookup(self, track: SelectionTrack) -> Match:
+        """找这首歌的本地文件。
 
-        第二层（``title_in_filename``）**必须同时命中艺人**：只比曲名会把
-        「颜人中 - My love」错配到「MK (JPN) - My Love.flac」这类通用标题上
-        （2026-11-06 用真实数据跑出来的误判）。
+        规则：
+        1. 文件名键精确命中且只有一份 → 用
+        2. 曲名按词边界命中 + 艺人也在文件名里 → 用（能容忍 ``Song (Extended Mix)``）
+        3. 多个候选 → 不猜
+        4. **可播放文件优先**：同一首既有 .flac 又有 .ncm 时算「已有」；
+           只有 .ncm 时返回 ``encrypted=True``，由调用方标成"待解密"而不是"已有"
+
+        第二层必须同时命中艺人是踩出来的：只比曲名会把「颜人中 - My love」
+        错配到「MK (JPN) - My Love.flac」。
         """
         key = track_key(track.title, track.artists)
-        hits = self._by_key.get(key, [])
-        if len(hits) == 1:
-            return hits[0], STRATEGY_FILENAME, 1
-        if len(hits) > 1:
-            return None, STRATEGY_FILENAME, len(hits)
+        matched = self._pick(self._by_key.get(key, []), STRATEGY_FILENAME)
+        if matched.found or matched.candidates > 1:
+            return matched
 
-        title_norm = normalize(track.title)
         artist_norm = normalize(track.artists[0]) if track.artists else ""
-        if not title_norm or not artist_norm:
-            return None, "", 0
-
-        # 曲名作为独立词出现在文件名里（能容忍 "Song (Extended Mix)"），且艺人也在
         title_words = normalize_words(track.title)
-        if not title_words:
-            return None, "", 0
+        if not artist_norm or not title_words:
+            return Match()
         hits = [
             f
             for f in self.files
             if artist_norm in f.stem_norm and contains_words(f.stem_words, title_words)
         ]
+        return self._pick(hits, STRATEGY_TITLE)
+
+    @staticmethod
+    def _pick(hits: list[AudioFile], strategy: str) -> Match:
+        if not hits:
+            return Match()
+        playable = [f for f in hits if not f.encrypted]
+        if len(playable) == 1:
+            return Match(playable[0], strategy, 1, encrypted=False)
+        if len(playable) > 1:
+            return Match(None, strategy, len(playable), encrypted=False)
+        # 只剩加密文件
         if len(hits) == 1:
-            return hits[0], STRATEGY_TITLE, 1
-        if len(hits) > 1:
-            return None, STRATEGY_TITLE, len(hits)
-        return None, "", 0
+            return Match(hits[0], strategy, 1, encrypted=True)
+        return Match(None, strategy, len(hits), encrypted=True)
 
 
 # ------------------------------------------------------------------ 计划
@@ -233,7 +259,7 @@ class AudioIndex:
 @dataclass
 class FetchItem:
     track: SelectionTrack
-    status: str  # present | ambiguous | missing
+    status: str  # present | encrypted | ambiguous | missing
     matched_path: str = ""
     strategy: str = ""
     candidates: int = 0
@@ -273,6 +299,10 @@ class FetchPlan:
     def ambiguous(self) -> list[FetchItem]:
         return [i for i in self.items if i.status == "ambiguous"]
 
+    @property
+    def encrypted(self) -> list[FetchItem]:
+        return [i for i in self.items if i.status == "encrypted"]
+
     def to_dict(self) -> dict:
         return {
             "generated_at": self.generated_at or now_iso(),
@@ -281,9 +311,11 @@ class FetchPlan:
                 "total": len(self.items),
                 "present": len(self.present),
                 "missing": len(self.missing),
+                "encrypted": len(self.encrypted),
                 "ambiguous": len(self.ambiguous),
             },
             "missing": [i.to_dict() for i in self.missing],
+            "encrypted": [i.to_dict() for i in self.encrypted],
             "ambiguous": [i.to_dict() for i in self.ambiguous],
             "present": [i.to_dict() for i in self.present],
         }
@@ -301,20 +333,23 @@ def build_fetch_plan(
     only_source: str | None = None,
     index: AudioIndex | None = None,
 ) -> FetchPlan:
-    """算出「本地已有 / 缺失 / 有歧义」三类曲目。"""
+    """算出「本地已有 / 待解密 / 缺失 / 有歧义」四类曲目。"""
     tracks = load_selection_tracks(state_dir, only_source)
     roots = [str(r) for r in (music_roots or [])]
     audio_index = index or AudioIndex.from_roots(roots)
 
     items: list[FetchItem] = []
     for track in tracks:
-        matched, strategy, candidates = audio_index.lookup(track)
-        if matched is not None:
+        match = audio_index.lookup(track)
+        if match.found and not match.encrypted:
             items.append(
-                FetchItem(track, "present", matched.path, strategy or STRATEGY_FILENAME, 1)
+                FetchItem(track, "present", match.file.path, match.strategy or STRATEGY_FILENAME, 1)
             )
-        elif candidates > 1:
-            items.append(FetchItem(track, "ambiguous", "", strategy, candidates))
+        elif match.found and match.encrypted:
+            # 只有加密容器：不能算"已有"，Rekordbox 放不了它
+            items.append(FetchItem(track, "encrypted", match.file.path, match.strategy, 1))
+        elif match.candidates > 1:
+            items.append(FetchItem(track, "ambiguous", "", match.strategy, match.candidates))
         else:
             items.append(FetchItem(track, "missing"))
 

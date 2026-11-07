@@ -414,7 +414,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     print(f"曲库目录 : {', '.join(plan.music_roots) if plan.music_roots else '（未设置）'}")
     print(
         f"本地已有 : {counts['present']}    缺失 : {counts['missing']}    "
-        f"有歧义 : {counts['ambiguous']}"
+        f"待解密 : {counts.get('encrypted', 0)}    有歧义 : {counts['ambiguous']}"
     )
 
     if not plan.music_roots:
@@ -439,6 +439,15 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         if len(plan.ambiguous) > 10:
             print(f"  …… 另有 {len(plan.ambiguous) - 10} 条")
 
+    if plan.encrypted:
+        print()
+        print(f"待解密（只有加密容器，Rekordbox 放不了）：{len(plan.encrypted)} 首")
+        for item in plan.encrypted[:10]:
+            print(f"  {_truncate(item.track.title or '(无标题)', 40)}  {Path(item.matched_path).name}")
+        if len(plan.encrypted) > 10:
+            print(f"  …… 另有 {len(plan.encrypted) - 10} 条")
+        print("  处理：配好 fetch.post_command 后跑 fetch --run，或自己解密后跑 fetch --verify")
+
     if not args.run:
         print()
         if written:
@@ -453,6 +462,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     def progress(index: int, total: int, item, command: str) -> None:
         print(f"  [{index}/{total}] {item.track.title} - {item.track.artist_text}")
 
+    def progress_post(index: int, total: int, item, command: str) -> None:
+        print(f"  [后处理 {index}/{total}] {Path(item.matched_path).name}")
+
     try:
         outcome = services.fetch_run(
             state_dir=args.state_dir,
@@ -464,6 +476,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             on_progress=progress,
             commands=parse_commands(args.command),
             force=args.force,
+            post_command=args.post_command,
+            on_post_progress=progress_post,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"错误：{exc}", file=sys.stderr)
@@ -485,10 +499,26 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     after = outcome["after"]
     print()
-    print(f"重扫结果 : 本地已有 {after['present']}    仍缺失 {after['missing']}")
-    if after["missing"]:
-        print("仍缺失的可以重跑一次 fetch --run（已成功的会跳过）")
-    return 0 if not after["missing"] else 1
+    print(f"重扫结果 : 本地已有 {after['present']}    仍缺失 {after['missing']}    待解密 {after.get('encrypted', 0)}")
+
+    encrypted = outcome.get("encrypted") or {}
+    if encrypted.get("before"):
+        print()
+        print(f"加密容器 : {encrypted['before']} → {encrypted.get('after', 0)}")
+        if not encrypted.get("post_configured"):
+            print("  未配置 fetch.post_command —— 这些文件需要你自己解密后跑 fetch --verify")
+        else:
+            posts = encrypted.get("post") or []
+            ok = sum(1 for r in posts if r.get("ok"))
+            print(f"  后处理命令：成功 {ok} / 失败 {len(posts) - ok}")
+            for result in posts:
+                if not result.get("ok"):
+                    print(f"    ✖ {Path(result.get('file') or '').name}: "
+                          f"{(result.get('stderr') or '').strip().splitlines()[:1]}")
+
+    if after["missing"] or after.get("encrypted"):
+        print("仍缺失的可以重跑一次 fetch --run（已确认的会跳过）")
+    return 0 if not after["missing"] and not after.get("encrypted") else 1
 
 
 # ------------------------------------------------------------------ argparse
@@ -499,7 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.5.0")
+    parser.add_argument("--version", action="version", version="rb-sync 0.6.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(
@@ -623,6 +653,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="平台=命令",
         help='临时指定某个平台的下载命令，例如 --command netease=\'yun "{url}" -o "{out}"\'',
+    )
+    fetch_cmd.add_argument(
+        "--post-command",
+        default=None,
+        metavar="命令",
+        help=(
+            '下载成功后的通用后处理命令，用 {file} 指代待处理文件。'
+            "典型用途：把加密容器交给**你自己的**工具处理（项目不内置解密）"
+        ),
     )
     fetch_cmd.add_argument("--verify", action="store_true", help="只重扫磁盘并更新状态")
     fetch_cmd.add_argument("--json", action="store_true", help="以 JSON 输出")

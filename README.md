@@ -164,6 +164,29 @@ python -m rb_sync fetch --run
 增量靠 `state/fetch_state.json`：`present`（磁盘确认）与 `downloaded`（命令返回 0 但未核实）
 都会跳过；想强制重跑加 `--force`。`fetch --verify` 只重扫磁盘、不执行命令。
 
+### 加密文件（`.ncm` 等）
+
+下载到的是加密容器时，它**不会被当成「已有」** —— Rekordbox 放不了 `.ncm`。
+fetch 把它单独标成「待解密」：既不重复下载，也不会假装完成。
+
+处理有两条路，都不用改仓库代码：
+
+**1. 配一条通用后处理命令**，只对「只有加密容器」的曲目执行：
+
+```json
+"fetch": {
+  "post_command": "C:\\tools\\你的解密包装.cmd \"{file}\""
+}
+```
+
+占位符：`{file} {name} {artists} {album} {source} {uid} {playlists} {out}`。
+跑完会自动重扫，解密成功的变成「已有」，没成功的继续留在「待解密」。
+
+**2. 自己处理后重扫**：`rb-sync fetch --verify`。
+
+> 仓库里不内置、不调用、不托管任何解密实现 —— 原因见 [CLAUDE.md](CLAUDE.md) 的 C3。
+> 上面那条命令由你自己写、自己放在仓库外。
+
 ## 产物（全是磁盘上的 JSON，可读、可 diff、可重跑）
 
 ```
