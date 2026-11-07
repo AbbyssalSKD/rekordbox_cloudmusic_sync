@@ -161,6 +161,42 @@ python -m rb_sync fetch --run
 
 没配置命令时是 **handoff 模式**：只把清单写到 `<state-dir>/fetch/<平台>.txt`，交给你自己的工具。
 
+### 整歌单模式（多数下载器只能按歌单下）
+
+逐曲下载要求「给一个歌曲链接就能下一首」，但很多工具（比如 yun-playlist-downloader）
+只接受**歌单 / 专辑 / 电台**的链接。这时候用整歌单模式：一条命令跑完
+**下载 → 挑出真缺的入库 → 清空暂存区**。
+
+```json
+{
+  "fetch": {
+    "playlist_command": "yun \"{playlist_url}\" -s -q 999",
+    "inbox_dir": "F:\\yun_inbox",
+    "out_dir": "F:\\Music\\Sync"
+  }
+}
+```
+
+```powershell
+python -m rb_sync fetch --run-playlists
+```
+
+```powershell
+# 图形界面「下载」页也有「整歌单下载」按钮（会先要你确认）
+```
+
+它做的事：
+
+1. 只对**还有缺口**的歌单执行命令（没有缺口的歌单不下，省流量）；
+2. 命令**在 `inbox_dir` 里执行**（多数下载器没有输出目录参数，只会写当前目录）；
+3. 扫 `inbox_dir`，只把**确实缺的**文件搬进 `out_dir`，同名的已在库不覆盖；
+4. 清空 `inbox_dir`，只保留 cookie 之类的凭据文件（名字含 `cookie` 的 `.txt`）。
+
+占位符：`{playlist_url} {name} {source} {id} {out}`。
+
+> 模板里的相对路径按 `inbox_dir` 解析，不是按你敲命令的目录。要引用脚本之类，
+> 请写绝对路径。
+
 增量靠 `state/fetch_state.json`：`present`（磁盘确认）与 `downloaded`（命令返回 0 但未核实）
 都会跳过；想强制重跑加 `--force`。`fetch --verify` 只重扫磁盘、不执行命令。
 

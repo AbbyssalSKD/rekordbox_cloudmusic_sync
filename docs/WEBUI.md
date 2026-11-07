@@ -113,6 +113,8 @@ rb_sync/
 | POST | `/api/plan` | 提交歌单链接 → 读歌单 + 变更集 | 只写 `state/` |
 | GET | `/api/selection` | 当前选择配置 | 只读 |
 | POST | `/api/relink/preview` | 生成重定位映射 | 只读 |
+| POST | `/api/fetch/plan` | 算缺口 + 写清单（不下载） | 只写 `state/` |
+| POST | `/api/fetch/run-playlists` | 整歌单下载 → 挑缺的入库 → 清空暂存区 | **执行外部命令 + 写曲库** |
 | POST | `/api/relink/apply` | 回写 `FolderPath` | **写库** |
 | POST | `/api/write/preview` | 生成写入计划（dry-run） | 只读 |
 | POST | `/api/write/apply` | 建 playlist / 加曲目 | **写库** |
@@ -124,6 +126,21 @@ rb_sync/
 - 可能超过 2 秒的操作（`plan` 拉网络、`relink` 扫目录、`apply` 写库）统一走 **job**：POST 返回 `{job_id}`，前端轮询 `/api/jobs/{id}`。
 - 写操作额外要求请求头 `X-RB-Token` + body 里 `confirm: "WRITE"`。
 - 错误统一 `{error: {code, message, hint}}`，`hint` 直接给用户看的下一步。
+
+### `POST /api/fetch/run-playlists`（0.7.0）
+
+整歌单模式，一次跑完「下载 → 挑出真缺的入库 → 清空暂存区」：
+
+```json
+{ "confirm": true, "inbox": "F:\\yun_inbox", "dest": "F:\\Music\\Sync" }
+```
+
+- **必须** `confirm: true`，否则 400 `confirm_required`。它真的会执行外部命令并写文件。
+- 命令来自 `fetch.playlist_command`，**项目不含任何下载实现**。
+- 返回 `{job_id}`，结果结构：
+  `{inbox, dest, before, after, playlists[], moved[], failed[], cleared, kept[], state_sync}`。
+- 只下载「还有缺口」的歌单；下载完只搬「确实缺的」；同名已在库不覆盖；
+  清理时保留名字带 `cookie` 的 `.txt`。
 
 ## 6. 六个页面
 

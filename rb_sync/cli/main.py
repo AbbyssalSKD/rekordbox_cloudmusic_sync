@@ -368,8 +368,73 @@ def parse_commands(raw: list[str] | None) -> dict[str, str] | None:
     return commands
 
 
+def _fetch_run_playlists(args: argparse.Namespace, roots) -> int:
+    """整歌单下载 → 挑出真缺的入库 → 清空暂存区。"""
+
+    def progress(index: int, total: int, target) -> None:
+        print(f"  [{index}/{total}] {target.name}（缺 {target.missing} 首）")
+
+    try:
+        outcome = services.fetch_run_playlists(
+            state_dir=args.state_dir,
+            music_roots=roots,
+            only_source=args.source,
+            inbox_dir=args.inbox,
+            dest_dir=args.dest,
+            template=args.playlist_command,
+            timeout=args.timeout,
+            on_progress=progress,
+            keep_inbox=args.keep_inbox,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(outcome, ensure_ascii=False, indent=2))
+        return 0 if not outcome["after"]["missing"] else 1
+
+    before, after = outcome["before"], outcome["after"]
+    print(f"缺口（下载前）: 缺失 {before['missing']}    已有 {before['present']}")
+    print(f"暂存目录      : {outcome['inbox']}")
+    print(f"入库目录      : {outcome['dest']}")
+    print()
+
+    if not outcome["playlists"]:
+        print("没有需要下载的歌单（当前没有缺口）。")
+        return 0
+
+    print(f"按歌单执行下载（{len(outcome['playlists'])} 个）：")
+    for run in outcome["playlists"]:
+        print(f"  {'✔' if run['ok'] else '✖'} {run['playlist']}  (exit {run['returncode']})")
+        if not run["ok"] and run["stderr"]:
+            tail = (run["stderr"].strip().splitlines() or [""])[-1]
+            print(f"      {tail[:120]}")
+
+    print()
+    print(f"入库：{len(outcome['moved'])} 个文件")
+    for item in outcome["moved"]:
+        print(f"  + {item['file']}  ({item['size'] / 1e6:.1f} MB)")
+
+    if outcome["failed"]:
+        print(f"未入库：{len(outcome['failed'])} 个")
+        for item in outcome["failed"]:
+            print(f"  ! {item['title']}: {item['reason']}")
+
+    if outcome.get("kept"):
+        print(f"保留   : {', '.join(outcome['kept'])}")
+
+    print()
+    print(f"清空暂存区 : 删除 {outcome['cleared']} 个文件（cookie 保留）")
+    print(f"对账结果   : 本地已有 {after['present']}    仍缺失 {after['missing']}")
+    return 0 if not after["missing"] else 1
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     roots = list(args.music_root or []) or None
+
+    if args.run_playlists:
+        return _fetch_run_playlists(args, roots)
 
     if args.verify:
         result = services.fetch_verify(args.state_dir, roots, args.source)
@@ -529,7 +594,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.6.1")
+    parser.add_argument("--version", action="version", version="rb-sync 0.7.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(
@@ -663,6 +728,17 @@ def build_parser() -> argparse.ArgumentParser:
             "典型用途：把加密容器交给**你自己的**工具处理（项目不内置解密）"
         ),
     )
+    fetch_cmd.add_argument(
+        "--run-playlists",
+        action="store_true",
+        help="整歌单模式：按歌单执行 fetch.playlist_command，挑出真缺的入库后清空暂存区",
+    )
+    fetch_cmd.add_argument("--inbox", default=None, metavar="目录", help="整歌单模式的暂存目录")
+    fetch_cmd.add_argument("--dest", default=None, metavar="目录", help="整歌单模式的入库目录")
+    fetch_cmd.add_argument(
+        "--playlist-command", default=None, metavar="命令", help="临时覆盖 fetch.playlist_command"
+    )
+    fetch_cmd.add_argument("--keep-inbox", action="store_true", help="不清理暂存区（排错用）")
     fetch_cmd.add_argument("--verify", action="store_true", help="只重扫磁盘并更新状态")
     fetch_cmd.add_argument("--json", action="store_true", help="以 JSON 输出")
     fetch_cmd.set_defaults(func=cmd_fetch)

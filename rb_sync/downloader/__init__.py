@@ -18,6 +18,17 @@ from .plan import (
     track_url,
     write_manifest,
 )
+from .pipeline import (
+    PLAYLIST_PLACEHOLDERS,
+    IngestResult,
+    PlaylistRun,
+    PlaylistTarget,
+    clear_inbox,
+    harvest,
+    playlist_targets,
+    render_playlist_command,
+    run_playlist_command,
+)
 from .runner import (
     POST_PLACEHOLDERS,
     PostResult,
@@ -31,6 +42,7 @@ from .runner import (
 from .state import FetchState
 
 __all__ = [
+    "PLAYLIST_PLACEHOLDERS",
     "POST_PLACEHOLDERS",
     "STRATEGY_FILENAME",
     "STRATEGY_PATH",
@@ -39,16 +51,24 @@ __all__ = [
     "FetchItem",
     "FetchPlan",
     "FetchState",
+    "IngestResult",
     "Match",
+    "PlaylistRun",
+    "PlaylistTarget",
     "PostResult",
     "RunResult",
     "RunSummary",
     "SelectionTrack",
     "build_fetch_plan",
+    "clear_inbox",
+    "harvest",
     "load_selection_tracks",
+    "playlist_targets",
     "render_command",
+    "render_playlist_command",
     "render_post",
     "run_items",
+    "run_playlist_command",
     "run_post",
     "scan_audio_files",
     "track_url",

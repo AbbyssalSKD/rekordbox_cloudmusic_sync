@@ -323,7 +323,74 @@ function renderFetchPlan(data) {
     ${sourceRows ? `<table><thead><tr><th>平台</th><th>缺失</th><th>清单文件</th></tr></thead><tbody>${sourceRows}</tbody></table>` : ""}
     ${sample ? `<details open><summary>缺失曲目（前 12 条）</summary>
       <table><thead><tr><th>曲名</th><th>艺人</th><th>所属歌单</th></tr></thead><tbody>${sample}</tbody></table></details>` : ""}
-    ${counts.missing ? `<p class="hint">执行下载：<code>rb-sync fetch --run</code>（需先在配置里设置 fetch.commands）</p>` : ""}`;
+    ${counts.missing ? `<p class="hint">单曲级命令：<code>rb-sync fetch --run</code>（需配 fetch.commands）；
+      或点上面的「整歌单下载」走整张歌单。</p>` : ""}`;
+}
+
+/* ---------------------------------------------------------------- 整歌单下载 */
+
+async function runPlaylistFetch() {
+  const ok = window.confirm(
+    "将执行整歌单下载命令：\n\n" +
+      "① 在你的暂存目录里跑 fetch.playlist_command\n" +
+      "② 只把「确实缺的」文件搬进曲库\n" +
+      "③ 清空暂存目录（cookie 文件保留）\n\n" +
+      "继续？"
+  );
+  if (!ok) return;
+
+  const btn = $("#btn-fetch-run");
+  const box = $("#fetch-run-result");
+  btn.disabled = true;
+  box.hidden = false;
+  box.innerHTML = `<div class="hint">下载中…（整张歌单可能要几分钟，别关页面）</div>`;
+  jobStatus("整歌单下载…", "run");
+  try {
+    const result = await runJob("/api/fetch/run-playlists", { confirm: true }, "整歌单下载");
+    renderPlaylistRun(result);
+    jobStatus(`整歌单下载完成（${result.moved.length} 个入库）`, "ok");
+    await loadFetchPlan();
+  } catch (err) {
+    box.innerHTML = `<div class="err">${esc(err.message)}</div>`;
+    jobStatus(err.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderPlaylistRun(data) {
+  const box = $("#fetch-run-result");
+  const before = data.before || {};
+  const after = data.after || {};
+
+  const runs = (data.playlists || []).map((run) => `
+    <tr>
+      <td>${run.ok ? "✔" : "✖"}</td>
+      <td>${esc(run.playlist)}</td>
+      <td><span class="pill">${esc(run.source)}</span></td>
+      <td class="num">${run.returncode}</td>
+    </tr>`).join("");
+
+  const moved = (data.moved || []).map((item) => `
+    <tr><td>${esc(item.file)}</td><td class="num">${(item.size / 1e6).toFixed(1)} MB</td></tr>`).join("");
+
+  const failed = (data.failed || []).map((item) => `
+    <tr><td>${esc(item.title)}</td><td class="hint">${esc(item.reason)}</td></tr>`).join("");
+
+  box.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="k">下载前缺失</div><div class="v warn">${before.missing || 0}</div></div>
+      <div class="stat"><div class="k">入库文件</div><div class="v ok">${(data.moved || []).length}</div></div>
+      <div class="stat"><div class="k">清空暂存</div><div class="v">${data.cleared || 0}</div></div>
+      <div class="stat"><div class="k">下载后缺失</div><div class="v ${after.missing ? "warn" : "ok"}">${after.missing || 0}</div></div>
+    </div>
+    <p class="hint mono">暂存：${esc(data.inbox || "")}　→　入库：${esc(data.dest || "")}</p>
+    ${(data.kept || []).length ? `<p class="hint">保留：<code>${esc(data.kept.join("、"))}</code></p>` : ""}
+    ${runs ? `<table><thead><tr><th></th><th>歌单</th><th>平台</th><th>退出码</th></tr></thead><tbody>${runs}</tbody></table>` : ""}
+    ${moved ? `<details open><summary>入库文件（${(data.moved || []).length}）</summary>
+      <table><thead><tr><th>文件</th><th>大小</th></tr></thead><tbody>${moved}</tbody></table></details>` : ""}
+    ${failed ? `<details><summary>未入库（${(data.failed || []).length}）</summary>
+      <table><thead><tr><th>曲目</th><th>原因</th></tr></thead><tbody>${failed}</tbody></table></details>` : ""}`;
 }
 
 /* ---------------------------------------------------------------- 库体检 */
@@ -436,6 +503,7 @@ async function boot() {
   $("#btn-probe").addEventListener("click", () => probe().catch((e) => jobStatus(e.message, "err")));
   $("#btn-plan").addEventListener("click", readPlaylists);
   $("#btn-fetch-plan").addEventListener("click", loadFetchPlan);
+  $("#btn-fetch-run").addEventListener("click", runPlaylistFetch);
   $("#btn-library").addEventListener("click", loadLibrary);
   $("#btn-relink").addEventListener("click", previewRelink);
 

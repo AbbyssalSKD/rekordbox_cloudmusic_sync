@@ -483,3 +483,88 @@ def fetch_verify(
         "state_sync": synced,
         "unverified": _unverified_uids(state, plan),
     }
+
+
+def fetch_run_playlists(
+    state_dir: str | Path = DEFAULT_STATE_DIR,
+    music_roots: list[str] | None = None,
+    only_source: str | None = None,
+    inbox_dir: str | None = None,
+    dest_dir: str | None = None,
+    template: str | None = None,
+    timeout: float | None = None,
+    on_progress=None,
+    keep_inbox: bool = False,
+) -> dict:
+    """整歌单模式：下载 → 挑出真缺的入库 → 清空暂存区。
+
+    项目仍然不实现下载：这里只是「按歌单跑一条你配置的外部命令」，
+    再把落盘结果和缺口清单对账。多数下载器是歌单级的，逐曲接口并不存在，
+    所以要按歌单走一趟、再自己挑。
+
+    没有缺口的歌单不会被下载，省流量。
+    """
+    from .downloader import FetchState
+    from .downloader.pipeline import (
+        IngestResult,
+        clear_inbox,
+        harvest,
+        playlist_targets,
+        run_playlist_command,
+    )
+
+    settings = load_settings()
+    roots = list(music_roots) if music_roots is not None else list(settings.music_roots)
+    plan = fetch_plan(state_dir, roots, only_source)
+
+    store = StateStore(state_dir)
+    selection = store.load_selection()
+    if selection is None or not selection.playlists:
+        raise ValueError("还没有选择配置：先读一次歌单（rb-sync plan 或 WebUI「歌单」页）")
+
+    inbox = str(inbox_dir or settings.fetch_inbox_dir or "")
+    if not inbox:
+        raise ValueError("未配置暂存目录：设置 fetch.inbox_dir（或加 --inbox）")
+
+    dest = str(dest_dir or settings.fetch_out_dir or (roots[0] if roots else ""))
+    if not dest:
+        raise ValueError("未配置入库目录：设置 fetch.out_dir 或 rekordbox.music_roots")
+
+    command = (template if template is not None else settings.fetch_playlist_command) or ""
+    if not command:
+        raise ValueError(
+            "未配置整歌单下载命令：设置 fetch.playlist_command（或加 --playlist-command）"
+        )
+
+    per_playlist_timeout = float(timeout or 3600)
+
+    targets = playlist_targets(selection.playlists, plan)
+    runs = []
+    for index, target in enumerate(targets, start=1):
+        if on_progress:
+            on_progress(index, len(targets), target)
+        runs.append(
+            run_playlist_command(
+                command, target, cwd=inbox, out_dir=dest, timeout=per_playlist_timeout
+            )
+        )
+
+    ingested = harvest(inbox, dest, plan.missing)
+    cleared = IngestResult() if keep_inbox else clear_inbox(inbox)
+
+    after = fetch_plan(state_dir, roots, only_source)
+    state = FetchState(Path(state_dir) / "fetch_state.json")
+    synced = _sync_state_with_plan(state, after)
+
+    return {
+        "inbox": inbox,
+        "dest": dest,
+        "before": plan.to_dict()["counts"],
+        "after": after.to_dict()["counts"],
+        "playlists": [run.to_dict() for run in runs],
+        "moved": ingested.moved,
+        "failed": ingested.failed,
+        "cleared": cleared.cleared,
+        "kept": cleared.kept,
+        "state_sync": synced,
+    }

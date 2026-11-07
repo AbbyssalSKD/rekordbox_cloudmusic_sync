@@ -5,8 +5,8 @@
 
 - 最近更新：**2026-11-06**
 - 最新提交：`git log -1 --oneline`（本文件不写死自己的哈希，否则每次提交都会自我矛盾）
-- 代码版本：`rb-sync 0.6.1`
-- 测试基线：`80` 个离线单测全过
+- 代码版本：`rb-sync 0.7.0`
+- 测试基线：`85` 个离线单测全过
 
 ---
 
@@ -24,7 +24,7 @@
 
 1. **完整读本文件**（不是扫一眼）。
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
-3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `80 tests OK`。
+3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `85 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
    - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
    - `F:\PIONEER\Master\master.db`（或实际路径）可读；
@@ -148,6 +148,7 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 |---|---|---|
 | `rb-sync plan` | 读歌单 → 选择配置 + 快照 + 变更检测 | 否 |
 | `rb-sync fetch` | 算缺口（曲目→歌单映射）、生成清单、调用**用户配置的**外部下载命令；加密容器单独成档 | 否 |
+| `rb-sync fetch --run-playlists` | **整歌单模式**：下载 → 只挑真缺的入库 → 清空暂存区（0.7.0） | 写曲库目录 |
 | `rb-sync doctor` | 库体检：曲目/歌单树/缺失分布/完整性 | 只读副本 |
 | `rb-sync relink` | 失效路径重映射（**只算不写**） | 只读副本 |
 | `rb-sync serve` | 本机 WebUI（设置/歌单/变更/下载清单/体检/重定位预览） | 只读副本 |
@@ -162,7 +163,8 @@ fetch     → 热歌榜 200 首：本地已有 0 / 缺失 200 → 清单 200 行
             自建 24 首 .ncm 歌单：本地已有 0 / 缺失 0 / **待解密 24**（不再误判为已有）
             Prog House 31 首：配本人 VIP cookie 后 yun 31/31 全下 → 挑出真缺的 3 首 → **present 31 / missing 0**
 web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
-单测      → 80 个全过（venv 与裸系统 Python 各一遍）
+单测      → 85 个全过（venv 与裸系统 Python 各一遍）
+整歌单模式 → 0.7.0：CLI 端到端（假下载器）与 WebUI `/api/fetch/run-playlists` 均验证通过
 ```
 
 ### 7.2 W1 已提交（2026-11-06）
@@ -249,6 +251,7 @@ rb_sync/
 │   └── match.py   跨平台对齐：normalize / track_key / same_track（不合并 Remix/Live）
 ├── downloader/    fetch 阶段：缺口计算、清单、外部命令适配、增量状态
 │   ├── plan.py    曲目→歌单映射、三层匹配（文件名校验艺人）、缺失清单
+│   ├── pipeline.py 整歌单模式：按歌单跑命令 → 挑缺的入库（带重试）→ 清空暂存区
 │   ├── runner.py  命令模板渲染 + subprocess（只调用用户命令，不下载）
 │   └── state.py   fetch_state.json：present / downloaded / failed
 ├── rekordbox/
@@ -315,7 +318,9 @@ docs/
       所以内容就是 `MUSIC_U=...; __csrf=...` 这种；默认路径是 CWD 下的 `yun.cookie.txt`
 19. **刚下载完的大文件可能被瞬间锁住**。把 yun 下的文件搬进曲库时，`shutil.move` 报
     `PermissionError: [WinError 5]`，重试同样的拷贝就成功了（杀软/索引器在扫新文件）。
-    **对策：搬运脚本要带重试，别把一次性失败当成永久错误。**
+    **对策：搬运脚本要带重试，别把一次性失败当成永久错误。** `pipeline.harvest` 已内置 3 次重试。
+20. **整歌单命令是在暂存目录里执行的**（`cwd=inbox_dir`）。模板里的相对路径按**暂存目录**解析，
+    不是按你敲命令的地方解析 —— 要引用脚本必须写绝对路径（2026-11-06 端到端演练时踩到过）。
 
 ---
 
@@ -362,3 +367,4 @@ docs/
 | 2026-11-06 | 本次提交 | 弃用 E 盘（只扫 `F:\Music`）：relink 重算 338→284；配置解析失败不再静默回退；WebUI 版本/配置红标；80 单测 |
 | 2026-11-06 | 文档 | 实测确认 `unlock-music/cli` 与 `ix64/unlock-music` 均被 DMCA 下架 |
 | 2026-11-06 | 未提交（仅配置） | 接入 `Majjcom/ncmpp`（D:\ncmpp + 包装脚本 decrypt_one.cmd），`fetch.post_command` 已配置；仓库代码未改动 |
+| 2026-11-06 | 本次提交 | **0.7.0 整歌单模式**：`fetch --run-playlists` + WebUI「整歌单下载」按钮；下载→挑缺的入库→清空暂存区（保留 cookie）；`downloader/pipeline.py`；85 单测 |

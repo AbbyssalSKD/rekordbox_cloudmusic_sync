@@ -103,15 +103,17 @@
   <section class="view" id="view-fetch">
     <h2>下载清单</h2>
     <p class="hint">
-      对比「选择配置里的曲目」和「曲库目录里已有的文件」，算出还缺哪些。
-      这里只生成清单，<b>不会下载任何东西</b>；执行要回到命令行
-      <code>rb-sync fetch --run</code>，并且需要你先在配置里填好各平台的下载命令。
+      「算出缺口」只对比并生成清单，<b>不会下载</b>；
+      「整歌单下载」会执行你在 <code>fetch.playlist_command</code> 里配置的外部命令
+      （项目本身不含任何下载实现），然后只把<b>真正缺的</b>挑进曲库，最后清空暂存目录。
     </p>
     <div class="row">
       <button class="primary" id="btn-fetch-plan">算出缺口</button>
-      <span class="hint inline">扫描曲库目录，可能几秒</span>
+      <button id="btn-fetch-run">整歌单下载</button>
+      <span class="hint inline">下载 → 挑缺的入库 → 清空暂存区</span>
     </div>
     <div id="fetch-result" class="panel empty">还没算过。</div>
+    <div id="fetch-run-result" class="panel" hidden></div>
   </section>
 
   <!-- 库体检 -->

@@ -9,6 +9,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from rb_sync import services
 from rb_sync.downloader import (
@@ -23,6 +24,7 @@ from rb_sync.downloader import (
     write_manifest,
 )
 from rb_sync.downloader.plan import SelectionTrack
+from rb_sync.downloader.pipeline import clear_inbox, harvest, playlist_targets
 from rb_sync.model import PlaylistSnapshot, Selection, TrackRef
 from rb_sync.state import StateStore
 
@@ -478,6 +480,118 @@ class TestPostCommand(unittest.TestCase):
             saved = json.loads((state / "fetch_state.json").read_text(encoding="utf-8"))
             # 关键：不能被记成 downloaded，否则下次会被跳过、永远不解密
             self.assertEqual(saved["items"]["netease:8"]["status"], "encrypted")
+
+
+class TestPlaylistPipeline(unittest.TestCase):
+    """整歌单模式：只下缺的、只搬缺的、搬完清空暂存区（cookie 除外）。"""
+
+    def test_targets_skip_playlists_without_gap(self):
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            lib = tmp / "lib"
+            touch(lib / "Artist - Present.flac")
+            write_selection(
+                state,
+                [
+                    ("netease", "A", "Full", [make_track("1", "Present", ("Artist",))]),
+                    ("netease", "B", "Partial", [make_track("2", "Gone", ("Artist",))]),
+                ],
+            )
+            plan = build_fetch_plan(state, [lib])
+            targets = playlist_targets(
+                StateStore(state).load_selection().playlists, plan
+            )
+            self.assertEqual([t.name for t in targets], ["Partial"])
+            self.assertEqual(targets[0].missing, 1)
+
+    def test_harvest_moves_only_missing_files(self):
+        with temp_dir() as tmp:
+            inbox = tmp / "inbox"
+            dest = tmp / "lib"
+            dest.mkdir()
+            touch(inbox / "Artist - Gone.flac")
+            touch(inbox / "Other - Unrelated.flac")
+            item = SimpleNamespace(
+                track=SelectionTrack("netease", "9", "Gone", ("Artist",))
+            )
+            result = harvest(inbox, dest, [item])
+
+            self.assertEqual([m["file"] for m in result.moved], ["Artist - Gone.flac"])
+            self.assertTrue((dest / "Artist - Gone.flac").exists())
+            self.assertTrue((inbox / "Other - Unrelated.flac").exists())
+
+    def test_clear_inbox_keeps_cookie(self):
+        with temp_dir() as tmp:
+            inbox = tmp / "inbox"
+            touch(inbox / "yun.cookie.txt")
+            touch(inbox / "Artist - Song.mp3")
+            touch(inbox / "Prog House" / "Artist - Nested.flac")
+
+            result = clear_inbox(inbox)
+
+            self.assertEqual(result.cleared, 2)
+            self.assertTrue((inbox / "yun.cookie.txt").exists())
+            self.assertFalse((inbox / "Artist - Song.mp3").exists())
+            self.assertFalse((inbox / "Prog House").exists())
+            self.assertIn("yun.cookie.txt", result.kept)
+
+    def test_end_to_end_download_harvest_clear(self):
+        """下载 → 挑缺的入库 → 清空暂存区，一条命令跑完。"""
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            lib = tmp / "lib"
+            inbox = tmp / "inbox"
+            lib.mkdir()
+            inbox.mkdir()
+            (inbox / "yun.cookie.txt").write_text("MUSIC_U=fake", encoding="utf-8")
+            write_selection(
+                state,
+                [("netease", "A", "Mix", [make_track("7", "Seven", ("Artist",))])],
+            )
+
+            # 假的"下载器"：只往当前目录写一个文件，并多写一个已存在的重复文件
+            script = tmp / "fake_dl.py"
+            script.write_text(
+                "import pathlib\n"
+                "pathlib.Path('Artist - Seven.flac').write_bytes(b'audio')\n"
+                "pathlib.Path('Other - Duplicate.flac').write_bytes(b'dup')\n",
+                encoding="utf-8",
+            )
+            template = f'"{sys.executable}" "{script}"'
+
+            outcome = services.fetch_run_playlists(
+                state_dir=state,
+                music_roots=[lib],
+                inbox_dir=inbox,
+                dest_dir=lib,
+                template=template,
+            )
+
+            self.assertEqual(outcome["before"]["missing"], 1)
+            self.assertEqual(outcome["after"]["missing"], 0)
+            self.assertEqual(outcome["after"]["present"], 1)
+            self.assertEqual([m["file"] for m in outcome["moved"]], ["Artist - Seven.flac"])
+            self.assertEqual(outcome["cleared"], 1)  # 只清掉那个重复文件
+            self.assertTrue((lib / "Artist - Seven.flac").exists())
+            self.assertTrue((inbox / "yun.cookie.txt").exists())
+            self.assertFalse((inbox / "Other - Duplicate.flac").exists())
+
+    def test_missing_command_is_reported(self):
+        with temp_dir() as tmp:
+            state = tmp / "state"
+            lib = tmp / "lib"
+            lib.mkdir()
+            write_selection(
+                state, [("netease", "A", "Mix", [make_track("8", "Eight", ("Artist",))])]
+            )
+            with self.assertRaises(ValueError):
+                services.fetch_run_playlists(
+                    state_dir=state,
+                    music_roots=[lib],
+                    inbox_dir=tmp / "inbox",
+                    dest_dir=lib,
+                    template="",
+                )
 
 
 if __name__ == "__main__":

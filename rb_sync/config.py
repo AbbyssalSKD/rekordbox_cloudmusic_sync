@@ -42,6 +42,10 @@ class Settings:
     fetch_commands: dict[str, str] = field(default_factory=dict)
     # 下载成功后的通用后处理（例如用你自己的工具把加密容器转成可播放文件）
     fetch_post_command: str = ""
+    # 整歌单下载：把歌单 URL 交给外部命令（多数下载器是歌单级的，不是逐曲的）
+    fetch_playlist_command: str = ""
+    # 整歌单模式的暂存目录：命令在这里下载，跑完只把真缺的搬进曲库
+    fetch_inbox_dir: str = ""
     fetch_out_dir: str = ""
     fetch_timeout: int = 600
     netease_cookie: str = ""
@@ -72,6 +76,8 @@ class Settings:
             "fetch": {
                 "commands": dict(self.fetch_commands),
                 "post_command": self.fetch_post_command,
+                "playlist_command": self.fetch_playlist_command,
+                "inbox_dir": self.fetch_inbox_dir,
                 "out_dir": self.fetch_out_dir,
                 "timeout": self.fetch_timeout,
             },
@@ -103,6 +109,8 @@ class Settings:
             state_dir=str(data.get("state_dir") or "state"),
             fetch_commands={str(k): str(v) for k, v in commands.items() if v},
             fetch_post_command=str(fetch.get("post_command") or ""),
+            fetch_playlist_command=str(fetch.get("playlist_command") or ""),
+            fetch_inbox_dir=str(fetch.get("inbox_dir") or ""),
             fetch_out_dir=str(fetch.get("out_dir") or ""),
             fetch_timeout=int(fetch.get("timeout") or 600),
             netease_cookie=str(data.get("netease_cookie") or ""),
@@ -190,6 +198,10 @@ def update_settings(patch: dict[str, Any], path: str | Path = CONFIG_LOCAL) -> S
                 current.fetch_commands = merged
             if "post_command" in value:
                 current.fetch_post_command = str(value["post_command"] or "")
+            if "playlist_command" in value:
+                current.fetch_playlist_command = str(value["playlist_command"] or "")
+            if "inbox_dir" in value:
+                current.fetch_inbox_dir = str(value["inbox_dir"] or "")
             if "out_dir" in value:
                 current.fetch_out_dir = str(value["out_dir"] or "")
             if value.get("timeout"):

@@ -81,6 +81,8 @@ class Api:
             return 200, self.relink_preview(body)
         if path == "/api/fetch/plan" and method == "POST":
             return 200, self.fetch_plan(body)
+        if path == "/api/fetch/run-playlists" and method == "POST":
+            return 200, self.fetch_run_playlists(body)
         if path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
             job = self.jobs.get(job_id)
@@ -228,3 +230,36 @@ class Api:
             return payload
 
         return {"job_id": self.jobs.submit("计算下载清单", job)}
+
+    def fetch_run_playlists(self, body: dict) -> dict:
+        """整歌单模式：下载 → 挑出真缺的入库 → 清空暂存区。
+
+        会真正执行用户配置的 fetch.playlist_command，所以要显式确认（confirm）。
+        """
+        if not body.get("confirm"):
+            raise ApiError(
+                400,
+                "confirm_required",
+                "整歌单模式会执行外部下载命令并写入曲库，请显式确认（confirm=true）",
+            )
+
+        settings = load_settings()
+        roots = body.get("music_roots") or settings.music_roots
+        if isinstance(roots, str):
+            roots = [line.strip() for line in roots.splitlines() if line.strip()]
+        roots = [str(r) for r in (roots or [])]
+        source = body.get("source") or None
+        if source in ("auto", ""):
+            source = None
+
+        def job():
+            return services.fetch_run_playlists(
+                state_dir=self.state_dir,
+                music_roots=roots,
+                only_source=source,
+                inbox_dir=body.get("inbox") or None,
+                dest_dir=body.get("dest") or None,
+                template=body.get("playlist_command") or None,
+            )
+
+        return {"job_id": self.jobs.submit("整歌单下载", job)}
