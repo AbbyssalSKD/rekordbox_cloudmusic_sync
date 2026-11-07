@@ -5,8 +5,8 @@
 
 - 最近更新：**2026-11-06**
 - 最新提交：`git log -1 --oneline`（本文件不写死自己的哈希，否则每次提交都会自我矛盾）
-- 代码版本：`rb-sync 0.7.0`
-- 测试基线：`85` 个离线单测全过
+- 代码版本：`rb-sync 0.7.1`
+- 测试基线：`88` 个离线单测全过
 
 ---
 
@@ -24,7 +24,7 @@
 
 1. **完整读本文件**（不是扫一眼）。
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
-3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `85 tests OK`。
+3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `88 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
    - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
    - `F:\PIONEER\Master\master.db`（或实际路径）可读；
@@ -149,7 +149,7 @@ backup/master_<时间戳>.db          写入前备份（未实现）
 |---|---|---|
 | `rb-sync plan` | 读歌单 → 选择配置 + 快照 + 变更检测 | 否 |
 | `rb-sync fetch` | 算缺口（曲目→歌单映射）、生成清单、调用**用户配置的**外部下载命令；加密容器单独成档 | 否 |
-| `rb-sync fetch --run-playlists` | **整歌单模式**：下载 → 只挑真缺的入库 → 清空暂存区（0.7.0） | 写曲库目录 |
+| `rb-sync fetch --run-playlists` | **整歌单模式**：下载 → 解密（配了 post_command 时）→ 只挑真缺的入库 → 清空暂存区（0.7.0/0.7.1） | 写曲库目录 |
 | `rb-sync doctor` | 库体检：曲目/歌单树/缺失分布/完整性 | 只读副本 |
 | `rb-sync relink` | 失效路径重映射（**只算不写**） | 只读副本 |
 | `rb-sync serve` | 本机 WebUI（设置/歌单/变更/下载清单/体检/重定位预览） | 只读副本 |
@@ -164,8 +164,10 @@ fetch     → 热歌榜 200 首：本地已有 0 / 缺失 200 → 清单 200 行
             自建 24 首 .ncm 歌单：本地已有 0 / 缺失 0 / **待解密 24**（不再误判为已有）
             Prog House 31 首：配本人 VIP cookie 后 yun 31/31 全下 → 挑出真缺的 3 首 → **present 31 / missing 0**
 web 冒烟  → 18/18 通过（含 403 鉴权、job 轮询）
-单测      → 85 个全过（venv 与裸系统 Python 各一遍）
+单测      → 88 个全过（venv 与裸系统 Python 各一遍）
 整歌单模式 → 0.7.0：CLI 端到端（假下载器）与 WebUI `/api/fetch/run-playlists` 均验证通过
+解密环节  → 0.7.1：**用真实 .ncm 验证通过**（134 MB → 133.9 MB FLAC，头部 `fLaC` 正确）；
+            整歌单模式下现在会自动「下载 → 解密 → 挑缺的入库 → 清空」
 ```
 
 ### 7.2 W1 已提交（2026-11-06）
@@ -304,8 +306,11 @@ docs/
     - `D:\ncmpp\`：`git clone` 的 [Majjcom/ncmpp](https://github.com/Majjcom/ncmpp)（C++，121★）
     - `D:\ncmpp\bin\ncmpp.exe`：v1.1.0 release 预编译（478 KB）
     - `D:\ncmpp\decrypt_one.cmd`：我写的单文件包装（见下）
-    - `config.local.json` 的 `fetch.post_command` 已指向它
-    - ⚠️ **尚未用真实 `.ncm` 验证解密是否成功**（只验证了二进制能启动、输出命名规则、失败路径）
+    - `config.local.json` 的 `fetch.post_command` 已指向它：`"D:\ncmpp\decrypt_one.cmd" "{file}" "{out}"`
+    - **2026-11-06 用真实 `.ncm` 验证通过**：`DR.VEGAS LABORATORY - CHROMATIC.ncm`（134 MB）
+      → `DR.VEGAS LABORATORY - CHROMATIC.flac`（133.9 MB，头部 `fLaC`）
+    - 包装器要点：在**源文件旁边**建临时目录（不拷到 `%TEMP%`，省一次大盘拷贝）；
+      结尾用 `echo.\|` 喂掉 ncmpp 的 `system("pause")`；解出的文件由管线搬走
 18. **yun-playlist-downloader 实测结论（路线 A）**：
     - 只支持**歌单 / 专辑 / 电台** URL；单曲 URL 直接 `unsupported type`（源码 `getType` 是 `url.includes(type)`）；
     - 裸数字 id 会被当成**歌单 id**；无输出目录参数，永远下到 CWD；
@@ -322,6 +327,13 @@ docs/
     **对策：搬运脚本要带重试，别把一次性失败当成永久错误。** `pipeline.harvest` 已内置 3 次重试。
 20. **整歌单命令是在暂存目录里执行的**（`cwd=inbox_dir`）。模板里的相对路径按**暂存目录**解析，
     不是按你敲命令的地方解析 —— 要引用脚本必须写绝对路径（2026-11-06 端到端演练时踩到过）。
+21. **cmd 里 `"目录\"` 这种写法会吃掉引号**。`copy "%SRC%" "%WORK%\"` 中反斜杠紧贴引号，
+    cmd 把它当成转义，整条命令就废了（`[ncmpp] copy to temp failed`）。**目标路径要写全文件名**：
+    `copy /y "%SRC%" "%WORK%\%~nx1"`。`move ... "%DEST%\"` 同理，改成 `for %%F in (...) do move`。
+22. **在本项目的 agent 会话里，Python 进程只能写工作区**。写 `F:\`、`D:\ncmpp`、`%TEMP%`
+    都会 `PermissionError`（**不是杀软，也不是 ACL**）。所以：
+    - 跨盘的真实写入要**由用户在自己的终端里跑**，agent 只能在工作区（`.tmp/`）里做端到端验证；
+    - 早先那次"搬到曲库报 WinError 5"其实也混了这条，不一定全是文件锁。
 
 ---
 
@@ -369,3 +381,4 @@ docs/
 | 2026-11-06 | 文档 | 实测确认 `unlock-music/cli` 与 `ix64/unlock-music` 均被 DMCA 下架 |
 | 2026-11-06 | 未提交（仅配置） | 接入 `Majjcom/ncmpp`（D:\ncmpp + 包装脚本 decrypt_one.cmd），`fetch.post_command` 已配置；仓库代码未改动 |
 | 2026-11-06 | 本次提交 | **0.7.0 整歌单模式**：`fetch --run-playlists` + WebUI「整歌单下载」按钮；下载→挑缺的入库→清空暂存区（保留 cookie）；`downloader/pipeline.py`；85 单测 |
+| 2026-11-06 | 本次提交 | **0.7.1 解密接入管线**：整歌单模式自动「下载→解密→挑缺的入库→清空」；解不开/没配命令的容器**永不删除**；真实 `.ncm` 验证通过（134 MB → 133.9 MB FLAC）；88 单测 |

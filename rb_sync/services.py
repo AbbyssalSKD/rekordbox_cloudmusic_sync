@@ -495,6 +495,8 @@ def fetch_run_playlists(
     timeout: float | None = None,
     on_progress=None,
     keep_inbox: bool = False,
+    post_command: str | None = None,
+    on_decrypt=None,
 ) -> dict:
     """整歌单模式：下载 → 挑出真缺的入库 → 清空暂存区。
 
@@ -504,10 +506,12 @@ def fetch_run_playlists(
 
     没有缺口的歌单不会被下载，省流量。
     """
-    from .downloader import FetchState
+    from .downloader import FetchState, scan_audio_files
     from .downloader.pipeline import (
         IngestResult,
+        adopt_decrypted,
         clear_inbox,
+        decrypt_inbox,
         harvest,
         playlist_targets,
         run_playlist_command,
@@ -550,7 +554,41 @@ def fetch_run_playlists(
         )
 
     ingested = harvest(inbox, dest, plan.missing)
-    cleared = IngestResult() if keep_inbox else clear_inbox(inbox)
+
+    # 暂存区里如果有加密容器（如 .ncm），先跑后处理命令解开，再挑一次。
+    # 没有配置后处理时 decrypt_inbox 会把它们列进 failed —— 清理时会被保护，不会被删。
+    post_template = (
+        post_command if post_command is not None else settings.fetch_post_command
+    ) or ""
+
+    before_decrypt = {str(a.path) for a in scan_audio_files([inbox])}
+    decrypted = decrypt_inbox(
+        post_template, inbox, dest, plan.missing, timeout=per_playlist_timeout,
+        on_progress=on_decrypt,
+    )
+    if decrypted.get("removed"):
+        # 先让 harvest 认领（能对上缺失曲目的走正常流程）
+        again = harvest(inbox, dest, plan.missing)
+        ingested.moved.extend(again.moved)
+        ingested.failed.extend(again.failed)
+        # 对不上任何缺失曲目的解密产物也要入库（容器是用户主动放进来的）
+        adopted = adopt_decrypted(inbox, dest, before_decrypt)
+        ingested.moved.extend(adopted.moved)
+        ingested.failed.extend(adopted.failed)
+        decrypted["adopted"] = adopted.moved
+        decrypted["failed"] = list(decrypted.get("failed") or ()) + [
+            m["file"] for m in adopted.failed
+        ]
+        # 解密成功的容器不该再出现在"未入库"里
+        ingested.failed = [
+            item for item in ingested.failed if "只有加密容器" not in item.get("reason", "")
+        ]
+
+    cleared = (
+        IngestResult()
+        if keep_inbox
+        else clear_inbox(inbox, protect=tuple(decrypted.get("failed") or ()))
+    )
 
     after = fetch_plan(state_dir, roots, only_source)
     state = FetchState(Path(state_dir) / "fetch_state.json")
@@ -564,6 +602,7 @@ def fetch_run_playlists(
         "playlists": [run.to_dict() for run in runs],
         "moved": ingested.moved,
         "failed": ingested.failed,
+        "decrypted": decrypted,
         "cleared": cleared.cleared,
         "kept": cleared.kept,
         "state_sync": synced,

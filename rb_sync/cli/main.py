@@ -374,6 +374,9 @@ def _fetch_run_playlists(args: argparse.Namespace, roots) -> int:
     def progress(index: int, total: int, target) -> None:
         print(f"  [{index}/{total}] {target.name}（缺 {target.missing} 首）")
 
+    def progress_decrypt(index: int, total: int, item, command: str) -> None:
+        print(f"  [解密 {index}/{total}] {Path(item.matched_path).name}")
+
     try:
         outcome = services.fetch_run_playlists(
             state_dir=args.state_dir,
@@ -385,6 +388,8 @@ def _fetch_run_playlists(args: argparse.Namespace, roots) -> int:
             timeout=args.timeout,
             on_progress=progress,
             keep_inbox=args.keep_inbox,
+            post_command=args.post_command,
+            on_decrypt=progress_decrypt,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"错误：{exc}", file=sys.stderr)
@@ -402,19 +407,26 @@ def _fetch_run_playlists(args: argparse.Namespace, roots) -> int:
 
     if not outcome["playlists"]:
         print("没有需要下载的歌单（当前没有缺口）。")
-        return 0
-
-    print(f"按歌单执行下载（{len(outcome['playlists'])} 个）：")
-    for run in outcome["playlists"]:
-        print(f"  {'✔' if run['ok'] else '✖'} {run['playlist']}  (exit {run['returncode']})")
-        if not run["ok"] and run["stderr"]:
-            tail = (run["stderr"].strip().splitlines() or [""])[-1]
-            print(f"      {tail[:120]}")
+        # 不 return：暂存区里可能还有要解密的文件
+    else:
+        print(f"按歌单执行下载（{len(outcome['playlists'])} 个）：")
+        for run in outcome["playlists"]:
+            print(f"  {'✔' if run['ok'] else '✖'} {run['playlist']}  (exit {run['returncode']})")
+            if not run["ok"] and run["stderr"]:
+                tail = (run["stderr"].strip().splitlines() or [""])[-1]
+                print(f"      {tail[:120]}")
 
     print()
     print(f"入库：{len(outcome['moved'])} 个文件")
     for item in outcome["moved"]:
         print(f"  + {item['file']}  ({item['size'] / 1e6:.1f} MB)")
+
+    decrypted = outcome.get("decrypted") or {}
+    if decrypted.get("results"):
+        ok = sum(1 for r in decrypted["results"] if r.get("ok"))
+        print(f"解密      ：成功 {ok} / 失败 {len(decrypted['results']) - ok}")
+    elif decrypted.get("failed"):
+        print(f"解密      ：{len(decrypted['failed'])} 个容器未处理（没有配置 fetch.post_command）")
 
     if outcome["failed"]:
         print(f"未入库：{len(outcome['failed'])} 个")
@@ -594,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rb-sync",
         description="Rekordbox 离线曲库同步编排器（多平台歌单 → 选择配置 → 映射 → 写库）",
     )
-    parser.add_argument("--version", action="version", version="rb-sync 0.7.0")
+    parser.add_argument("--version", action="version", version="rb-sync 0.7.1")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser(

@@ -594,5 +594,118 @@ class TestPlaylistPipeline(unittest.TestCase):
                 )
 
 
+class TestDecryptStage(unittest.TestCase):
+    """加密容器：解开的入库，解不开的绝不能被清掉。"""
+
+    def _decryptor(self, tmp: Path, ok: bool) -> Path:
+        script = tmp / ("dec_ok.py" if ok else "dec_fail.py")
+        if ok:
+            script.write_text(
+                "import pathlib, sys\n"
+                "src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])\n"
+                "out.mkdir(parents=True, exist_ok=True)\n"
+                "(out / (src.stem + '.flac')).write_bytes(b'audio')\n",
+                encoding="utf-8",
+            )
+        else:
+            script.write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+        return script
+
+    def test_successful_decrypt_moves_file_and_removes_container(self):
+        with temp_dir() as tmp:
+            state, lib, inbox = tmp / "state", tmp / "lib", tmp / "inbox"
+            lib.mkdir()
+            inbox.mkdir()
+            (inbox / "yun.cookie.txt").write_text("MUSIC_U=x", encoding="utf-8")
+            write_selection(
+                state, [("netease", "A", "Mix", [make_track("9", "Secret", ("Artist",))])]
+            )
+
+            dl = tmp / "dl.py"
+            dl.write_text(
+                "import pathlib\n"
+                "pathlib.Path('Artist - Secret.ncm').write_bytes(b'ENCRYPTED')\n",
+                encoding="utf-8",
+            )
+            dec = self._decryptor(tmp, ok=True)
+            template = f'"{sys.executable}" "{dl}"'
+            post = f'"{sys.executable}" "{dec}" "{{file}}" "{{out}}"'
+
+            outcome = services.fetch_run_playlists(
+                state_dir=state,
+                music_roots=[lib],
+                inbox_dir=inbox,
+                dest_dir=lib,
+                template=template,
+                post_command=post,
+            )
+
+            self.assertTrue(outcome["decrypted"]["configured"])
+            self.assertEqual(len(outcome["decrypted"]["removed"]), 1)
+            self.assertEqual(outcome["after"]["present"], 1)
+            self.assertEqual(outcome["after"]["missing"], 0)
+            self.assertEqual(outcome["after"]["encrypted"], 0)
+            self.assertEqual([m["file"] for m in outcome["moved"]], ["Artist - Secret.flac"])
+            self.assertFalse((inbox / "Artist - Secret.ncm").exists())
+            self.assertTrue((inbox / "yun.cookie.txt").exists())
+
+    def test_failed_decrypt_keeps_the_container(self):
+        with temp_dir() as tmp:
+            state, lib, inbox = tmp / "state", tmp / "lib", tmp / "inbox"
+            lib.mkdir()
+            inbox.mkdir()
+            write_selection(
+                state, [("netease", "A", "Mix", [make_track("10", "Broken", ("Artist",))])]
+            )
+            dl = tmp / "dl.py"
+            dl.write_text(
+                "import pathlib\n"
+                "pathlib.Path('Artist - Broken.ncm').write_bytes(b'ENCRYPTED')\n",
+                encoding="utf-8",
+            )
+            dec = self._decryptor(tmp, ok=False)
+
+            outcome = services.fetch_run_playlists(
+                state_dir=state,
+                music_roots=[lib],
+                inbox_dir=inbox,
+                dest_dir=lib,
+                template=f'"{sys.executable}" "{dl}"',
+                post_command=f'"{sys.executable}" "{dec}" "{{file}}" "{{out}}"',
+            )
+
+            self.assertEqual(len(outcome["decrypted"]["removed"]), 0)
+            self.assertTrue((inbox / "Artist - Broken.ncm").exists(), "解不开的容器必须保留")
+            self.assertEqual(outcome["after"]["missing"], 1)
+
+    def test_without_post_command_container_survives(self):
+        with temp_dir() as tmp:
+            state, lib, inbox = tmp / "state", tmp / "lib", tmp / "inbox"
+            lib.mkdir()
+            inbox.mkdir()
+            write_selection(
+                state, [("netease", "A", "Mix", [make_track("11", "Locked", ("Artist",))])]
+            )
+            dl = tmp / "dl.py"
+            dl.write_text(
+                "import pathlib\n"
+                "pathlib.Path('Artist - Locked.ncm').write_bytes(b'ENCRYPTED')\n",
+                encoding="utf-8",
+            )
+
+            outcome = services.fetch_run_playlists(
+                state_dir=state,
+                music_roots=[lib],
+                inbox_dir=inbox,
+                dest_dir=lib,
+                template=f'"{sys.executable}" "{dl}"',
+                post_command="",
+            )
+
+            self.assertFalse(outcome["decrypted"]["configured"])
+            self.assertTrue((inbox / "Artist - Locked.ncm").exists(), "没配解密命令就不能删")
+            self.assertEqual(outcome["cleared"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,8 +15,11 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
-from .plan import AudioIndex, scan_audio_files
+from ..model import ENCRYPTED_SUFFIXES
+from .plan import AudioIndex, SelectionTrack, scan_audio_files
+from .runner import run_post
 
 # 整歌单命令支持的占位符
 PLAYLIST_PLACEHOLDERS = "{playlist_url} {out} {name} {source} {id}"
@@ -185,6 +188,45 @@ def run_playlist_command(
 # ------------------------------------------------------------------ 入库
 
 
+def adopt_decrypted(
+    inbox: str | Path,
+    dest: str | Path,
+    before: set[str],
+) -> IngestResult:
+    """把解密产出的文件搬进曲库（包括对不上任何缺失曲目的那些）。
+
+    解密是用户主动触发的（容器是他自己放进来的），所以产物不该被清理掉；
+    但如果曲库里已有同名文件，就不覆盖，留着让人看。
+    """
+    inbox_path = Path(inbox)
+    dest_path = Path(dest)
+    result = IngestResult()
+    if not inbox_path.is_dir():
+        return result
+    dest_path.mkdir(parents=True, exist_ok=True)
+
+    for audio in scan_audio_files([str(inbox_path)]):
+        if audio.encrypted or str(audio.path) in before:
+            continue
+        src = Path(audio.path)
+        target = dest_path / src.name
+        if target.exists():
+            result.failed.append(
+                {"title": src.stem, "reason": f"曲库已有同名文件，未覆盖：{target.name}"}
+            )
+            continue
+        ok, error = _move_with_retry(src, target)
+        if ok:
+            try:
+                size = target.stat().st_size
+            except OSError:
+                size = 0
+            result.moved.append({"title": src.stem, "file": target.name, "size": size})
+        else:
+            result.failed.append({"title": src.stem, "reason": error})
+    return result
+
+
 def _move_with_retry(src: Path, dst: Path, attempts: int = 3, delay: float = 0.6) -> tuple[bool, str]:
     """搬文件，带重试。
 
@@ -259,14 +301,23 @@ def harvest(
     return result
 
 
-def clear_inbox(inbox: str | Path, keep: tuple[str, ...] = DEFAULT_KEEP) -> IngestResult:
-    """清空暂存区，只保留 cookie 之类的凭据文件。"""
+def clear_inbox(
+    inbox: str | Path,
+    keep: tuple[str, ...] = DEFAULT_KEEP,
+    protect: tuple[str, ...] = (),
+) -> IngestResult:
+    """清空暂存区，只保留 cookie 之类的凭据文件。
+
+    ``protect`` 里是绝对路径：**解密失败或没能处理的文件必须保留**，
+    宁可让暂存区不干净，也不能把还没处理过的文件删掉。
+    """
     inbox_path = Path(inbox)
     result = IngestResult()
     if not inbox_path.is_dir():
         return result
 
     keep_lower = {name.lower() for name in keep}
+    protected = {str(Path(p).resolve()).lower() for p in protect}
     # 深的先删，方便之后删空目录
     paths = sorted(inbox_path.rglob("*"), key=lambda p: len(p.parts), reverse=True)
     for path in paths:
@@ -280,12 +331,100 @@ def clear_inbox(inbox: str | Path, keep: tuple[str, ...] = DEFAULT_KEEP) -> Inge
         if name in keep_lower or (name.endswith(".txt") and "cookie" in name):
             result.kept.append(str(path.relative_to(inbox_path)))
             continue
+        if str(path.resolve()).lower() in protected:
+            result.kept.append(str(path.relative_to(inbox_path)))
+            continue
         try:
             path.unlink()
             result.cleared += 1
         except OSError:
             pass
     return result
+
+
+# ------------------------------------------------------------------ 解密
+
+
+def encrypted_files(inbox: str | Path) -> list[Path]:
+    """暂存区里还没解开的加密容器。"""
+    if not Path(inbox).is_dir():
+        return []
+    return [Path(f.path) for f in scan_audio_files([str(inbox)]) if f.encrypted]
+
+
+def _shim_item(path: Path):
+    """给"对不上任何缺失曲目"的加密文件造一个最小上下文，供模板渲染。"""
+    track = SelectionTrack(source="", track_id=path.stem, title=path.stem)
+    return SimpleNamespace(track=track, matched_path=str(path), uid="")
+
+
+def decrypt_inbox(
+    post_template: str,
+    inbox: str | Path,
+    dest: str | Path,
+    missing_items,
+    timeout: float = 600.0,
+    on_progress=None,
+) -> dict:
+    """对暂存区里的加密容器跑用户配置的后处理命令。
+
+    解出来的文件**先落在暂存区**，再由 harvest 统一挑进曲库 —— 这样
+    「只有确实缺的才进库」这条约束不会被解密环节绕过去。
+
+    解开成功 → 删掉原容器（内容已经变成可播放文件）；
+    失败或没配命令 → **保留**，由调用方在清理时保护起来。
+    """
+    files = encrypted_files(inbox)
+    if not files:
+        return {"configured": bool(post_template), "results": [], "removed": [], "failed": []}
+    if not post_template:
+        return {
+            "configured": False,
+            "results": [],
+            "removed": [],
+            "failed": [str(p) for p in files],
+        }
+
+    index = AudioIndex.from_roots([str(inbox)])
+    items = []
+    for path in files:
+        # 缺失项本身没有路径（missing 就是说"磁盘上找不到"），所以这里必须
+        # 用真实文件路径重建上下文；只借用它的曲目元数据，让模板里的
+        # {name}/{artists} 之类能渲染出来。
+        owner = None
+        for candidate in missing_items:
+            match = index.lookup(candidate.track)
+            if match.file and match.file.path == str(path):
+                owner = candidate
+                break
+        shim = _shim_item(path)
+        if owner is not None:
+            shim.track = owner.track
+            shim.uid = owner.uid
+        items.append(shim)
+
+    results = run_post(
+        post_template, items, out_dir=str(inbox), timeout=timeout, on_progress=on_progress
+    )
+
+    removed: list[str] = []
+    failed: list[str] = []
+    for item, result in zip(items, results):
+        src = Path(item.matched_path or "")
+        if result.ok:
+            try:
+                src.unlink()
+                removed.append(str(src))
+            except OSError:
+                pass
+        else:
+            failed.append(str(src))
+    return {
+        "configured": True,
+        "results": [r.to_dict() for r in results],
+        "removed": removed,
+        "failed": failed,
+    }
 
 
 def inbox_audio_count(inbox: str | Path) -> int:
@@ -304,6 +443,8 @@ __all__ = [
     "PlaylistRun",
     "PlaylistTarget",
     "clear_inbox",
+    "decrypt_inbox",
+    "encrypted_files",
     "harvest",
     "inbox_audio_count",
     "is_credentials_file",
