@@ -26,8 +26,7 @@
 2. `git log --oneline -5` + `git status --short`，确认工作区有没有别人没提交的改动。
 3. 跑基线测试：`python -m unittest discover -s tests` → 应为 `88 tests OK`。
 4. 涉及库的操作前，额外确认三件事：
-   - 移动硬盘已挂载，**盘符不一定是 E: 或 F:**（会漂移，用 `Get-CimInstance Win32_LogicalDisk` 查）；
-   - `F:\PIONEER\Master\master.db`（或实际路径）可读；
+   - 数据库路径已被指定；
    - Rekordbox 进程未运行（写库时才强制，读库不强制）。
 5. 用一句话向用户复述「当前阶段 + 本轮要做什么」，得到确认再动手。
 
@@ -60,7 +59,7 @@
 | 目录结构 | **由用户自己维护**。`F:\Music` 下的 `Cloud Music` / `Neon step` / `rekordbox` / `djay` / `Cyanolights` / 各种专辑目录**一律不要合并、不要搬运**（2026-11-06 用户明确说过「这几个文件夹都不需要你来修改」）。程序只负责把新下载的按 `fetch.out_dir` 放好 |
 | 未解密 | 24 个 `.ncm` 在 `E:\Music\Cloud Music\VipSongsDownload`（3.88 GB）—— 随 E 盘一起弃用；其中 12 首在 `F:\Music` 已有可播放版本，另 12 首只存在于 E |
 | Python | 系统 3.14.7（无 pyrekordbox）。**运行用 `D:\rb-sync-venv`**（工作区外，装了 pyrekordbox 0.5.0 + 项目 editable）；仓库内的 `.venv` 只适合跑单测（原因见 §12.23） |
-| C 盘 | 只剩约 5.8 GB，空间紧张 —— 别往 C 盘写大文件 |
+| C 盘 | 任何涉及C盘的操作都明确不被允许 |
 
 ---
 
@@ -85,7 +84,7 @@
 | **C2** | **文件 ≠ 曲目**：playlist 成员是 `DjmdContent` 外键，磁盘上有文件不等于能进 playlist | 必须先把文件与 collection 对齐 |
 | **C3** | **绝不内置**下载器或 NCM 解密 | 合规：网易 2021 年向 GitHub 发过 NCM 转换仓库的 DMCA；GitHub 会连带清理 fork |
 | **C4** | 映射/写库**不用 LLM** | 幂等性与可复现性；写库错一首要到演出才发现 |
-| **C5** | **禁止写死盘符与库路径** | 用户的盘符已从 E: 漂到 F:，导致 332 首路径失效 |
+| **C5** | **禁止写死盘符与库路径** | 用户期待这个项目可以被打包发布并被任何人使用， 因此盘符和库路径应当交由用户配置 |
 | **C6** | 只读诊断**必须操作副本** | 把 `master.db` 复制到 `state/.cache/` 再打开，用完即删 |
 | **C7** | 依赖策略：`plan` 零第三方依赖；`pyrekordbox` 是**可选**依赖 | 保证「装个 Python 就能读歌单」 |
 
