@@ -34,7 +34,7 @@
 | `relink` 失效路径重映射（只算不写） | ✅ 已实现 |
 | `fetch` 算缺口、生成清单、调用外部下载命令 | ✅ 已实现 |
 | `serve` 本机 WebUI（W1 只读：设置 / 歌单 / 变更 / 体检 / 重定位预览） | ✅ 已实现 |
-| `fetch` 按配置拉取缺失曲目（外部下载工具适配） | ⬜ 未实现 |
+| `fetch --run-playlists` 整歌单模式（下载 → 解密 → 只挑缺的入库 → 清空暂存区） | ✅ 已实现（0.7.0/0.7.1） |
 | `convert` 调用外部转换/解密工具 | ⬜ 未实现 |
 | `write` 生成映射并写入 Rekordbox playlist | ⬜ 未实现 |
 
@@ -121,14 +121,42 @@ $env:KUGOU_COOKIE   = "..."
 
 这就是「你在 App 里改歌单，下次运行程序自动跟上」的实现方式 —— 没有推送、没有后台常驻。
 
+## 配置：路径由你决定
+
+仓库里**没有任何默认盘符、默认库路径或默认曲库目录** —— 这个项目要能被任何人使用，所以所有路径都由你提供。
+
+优先级：命令行参数 > 环境变量 > `config.local.json` > 空（即"未配置"）。
+
+`config.local.json` 放在仓库根目录即可（已在 `.gitignore` 里，不会被提交）：
+
+```json
+{
+  "rekordbox": {
+    "db_path": "X:\\PIONEER\\Master\\master.db",
+    "music_roots": ["X:\\Music"]
+  },
+  "paths": { "previous_roots": ["X:/旧曲库根"] },
+  "fetch": {
+    "inbox_dir": "X:\\yun_inbox",
+    "out_dir": "X:\\Music\\Sync"
+  }
+}
+```
+
+- `db_path` 必填：没配就报错并告诉你该在哪填，**不会去猜**一个能用为止。`music_roots` 不配则算不出缺口，命令和界面都会提示去配。
+- `previous_roots` 只给 `relink` 用：它是**库里记录着的旧路径前缀**，用来把失效路径映射到新位置，不是"要扫描的目录"。
+- 也可以用 WebUI 的设置页改，写的是同一个文件。
+- 配置写坏了（少个逗号之类）会在命令输出和 WebUI 顶栏红标里指出，不会静默回退默认值。
+
 ## 取回缺失曲目（fetch）
 
 ```powershell
 # 只算缺口 + 生成清单，不下载任何东西
 python -m rb_sync fetch
 
-# 指定曲库目录（默认用配置里的 rekordbox.music_roots）
-python -m rb_sync fetch --music-root "F:\Music" --music-root "E:\Music"
+# 指定曲库目录（不指定时用配置里的 rekordbox.music_roots）
+# 下面的 X: 是占位符，换成你自己的盘符
+python -m rb_sync fetch --music-root "X:\Music"
 
 # 真正执行外部下载命令
 python -m rb_sync fetch --run
@@ -151,7 +179,7 @@ python -m rb_sync fetch --run
     "commands": {
       "netease": "yun \"{url}\" -q 320 -o \"{out}\""
     },
-    "out_dir": "F:\\Music\\Cloud Music\\Sync",
+    "out_dir": "X:\\Music\\Cloud Music\\Sync",
     "timeout": 600
   }
 }
@@ -171,8 +199,8 @@ python -m rb_sync fetch --run
 {
   "fetch": {
     "playlist_command": "yun \"{playlist_url}\" -s -q 999",
-    "inbox_dir": "F:\\yun_inbox",
-    "out_dir": "F:\\Music\\Sync"
+    "inbox_dir": "X:\\yun_inbox",
+    "out_dir": "X:\\Music\\Sync"
   }
 }
 ```
@@ -209,7 +237,7 @@ fetch 把它单独标成「待解密」：既不重复下载，也不会假装�
 
 ```json
 "fetch": {
-  "post_command": "C:\\tools\\你的解密包装.cmd \"{file}\" \"{out}\""
+  "post_command": "X:\\tools\\你的解密包装.cmd \"{file}\" \"{out}\""
 }
 ```
 
@@ -264,24 +292,26 @@ pip install -e .[rekordbox]
 
 ```powershell
 # 体检：库路径、完整性、曲目/歌单结构、失效文件分布
-python -m rb_sync doctor --db "F:\PIONEER\Master\master.db"
+python -m rb_sync doctor --db "X:\PIONEER\Master\master.db"
 
 # 重定位：把库里失效的旧路径映射到文件新位置（只生成计划，不写库）
-python -m rb_sync relink --db "F:\PIONEER\Master\master.db" `
-  --from E:/Music --to F:/Music `
-  --search F:\Music --search E:\Music
+python -m rb_sync relink --db "X:\PIONEER\Master\master.db" `
+  --from "X:/旧曲库根" --to "X:/新曲库根" `
+  --search "X:\Music"
 ```
 
-真实跑出来的结果（1,231 首的库，移动硬盘从 E: 变成 F: 后）：
+不写 `--db` 时就用配置里的 `rekordbox.db_path`；两处都没有时命令直接报错并告诉你去配，**不会去猜**。
+
+输出形状固定，数字取决于你自己的库：
 
 ```
-失效曲目 : 338
-可映射   : 306
-    basename            32
-    basename_ext        22   （换了扩展名，音质可能不同）
-    root_remap         252
-歧义     :  0
-未匹配   :  32
+失效曲目 : <N>
+可映射   : <a>
+    basename            <b>
+    basename_ext        <c>   （换了扩展名，音质可能不同）
+    root_remap          <d>
+歧义     : <e>
+未匹配   : <f>
 ```
 
 **只读保证**：`doctor` / `relink` 会把 `master.db` 复制到 `state/.cache/` 再打开，

@@ -11,7 +11,7 @@ flowchart TD
 
     subgraph S0["① 前置检查"]
         direction TB
-        A1["定位 master.db<br/>盘符会变，用 --db 指定"]
+        A1["定位 master.db<br/>路径来自配置，用 --db 指定"]
         A2["doctor 体检（只读副本）"]
         A3{"Rekordbox 在运行？"}
         A1 --> A2 --> A3
@@ -131,7 +131,7 @@ flowchart TD
     J7 -- "通过" --> K1
     K2 --> Z3(["结束：一个周期完成"])
 
-    subgraph SR["维护支线：盘符变了 / 路径失效"]
+    subgraph SR["维护支线：路径失效 / 换了位置"]
         direction TB
         R1["doctor 报大量缺失"]
         R2["relink 算映射<br/>root_remap / basename / basename_ext"]
@@ -159,7 +159,7 @@ flowchart TD
 ## 纯文本版（不方便渲染时看这个）
 
 ```
-[0] 前置     定位 master.db（F:\PIONEER\Master\master.db，盘符会变）
+[0] 前置     定位 master.db（用户在配置里给的路径；可能在任意盘）
              └ doctor 体检（只读副本）→ 看 RB 是否在运行
                         ↓
 [1] 读歌单   链接/ID/CSV → 识别平台 → 有序成员 ID → content_hash
@@ -212,17 +212,19 @@ flowchart TD
 2. **collection 对齐必须夹在映射和写入之间。** playlist 成员是 `DjmdContent` 的外键，磁盘上有文件不等于能进 playlist。跳过这一步，第 8 步会一首也加不进去。
 3. **写入必须是最后一步，且由人确认。** 它是唯一会改 `master.db` 的动作，而 `master.db` 是 SQLCipher 加密库、需要独占访问，你机器上已经因为这类写入被打断出现过两次 `Corrupt`。
 
-## 用你现在的库走一遍会是什么样
+## 走一遍会看到什么（数字取决于你自己的库）
 
-| 步骤 | 你这边的实际数字 |
+| 步骤 | 你会得到 |
 |---|---|
-| 0 | `F:\PIONEER\Master\master.db`，1,231 首，`integrity_check: ok`，RB 未运行 |
-| 1 | 例如选 3 个歌单，其中 2 个有变化 → `+4 -1` |
-| 2 | 新增 4 首里 3 首本地已有、1 首缺失 |
-| 3 | 只需下载 1 首 |
-| 6 | 1,231 首里当前 843 首文件在位、338 首缺失（其中 306 首可自动重定位、32 首确实不存在） |
-| 7 | 计划：新建 2 个 playlist，加 3 首，跳过 0 首 |
-| 8 | 备份 → 写入 → `integrity_check` → 通过 |
+| 0 | `doctor` 打开你配置的 `master.db` 副本，报曲目数 / 歌单数 / `integrity_check` / Rekordbox 是否在运行 |
+| 1 | 选中的歌单各出一条快照；与上次一致就复用，有变化就给出 `+N -M` |
+| 2 | 新增曲目里本地已有的复用，缺的进待下载清单 |
+| 3 | 只下载缺的那几首（命令由你配置） |
+| 6 | 库里路径失效的曲目被分成「可自动重定位 / 歧义 / 未匹配」三档 |
+| 7 | 计划：要新建哪些 playlist、加哪些歌、跳过哪些（dry-run，一个字节都不写） |
+| 8 | 备份 → 写入 → `integrity_check` → 通过（`write` 尚未实现） |
+
+> 本文档不记录某台机器的具体条数 —— 那些数字随曲库变化立刻过期，需要时用 `doctor` / `relink` 现算。
 
 ## 操作界面（WebUI，W1 已实现）
 

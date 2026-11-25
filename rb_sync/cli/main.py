@@ -208,11 +208,24 @@ def _format_track(track: dict) -> str:
 # ------------------------------------------------------------------ doctor
 
 
+def _db_arg(explicit: str | None) -> str | None:
+    """`--db` 优先，没给就用配置里的 `rekordbox.db_path`。
+
+    两者都没有时返回 None，由 `resolve_db_path` 抛出带指引的错误 ——
+    这里**不猜**任何路径（CLAUDE.md C5）。
+    """
+    if explicit:
+        return explicit
+    from ..config import load_settings
+
+    return load_settings().db_path or None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from ..rekordbox import RekordboxError, is_rekordbox_running
 
     try:
-        report = services.inspect_library(args.db, args.state_dir)
+        report = services.inspect_library(_db_arg(args.db), args.state_dir)
     except RekordboxError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
@@ -277,7 +290,7 @@ def cmd_relink(args: argparse.Namespace) -> int:
 
     try:
         plan, out_path = services.preview_relink(
-            args.db,
+            _db_arg(args.db),
             args.from_root,
             args.to_root,
             list(args.search or []),
@@ -762,7 +775,7 @@ def _add_db_args(parser: argparse.ArgumentParser) -> None:
         "--db",
         default=None,
         metavar="master.db",
-        help="Rekordbox 库路径（默认 %%APPDATA%%\\Pioneer\\rekordbox\\master.db）",
+        help="Rekordbox 库路径（不指定时用配置里的 rekordbox.db_path；本项目没有默认库路径）",
     )
     parser.add_argument(
         "--state-dir",

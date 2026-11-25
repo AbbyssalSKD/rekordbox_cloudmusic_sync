@@ -10,7 +10,6 @@ from .library import (
     PlaylistRow,
     RekordboxError,
     TrackRow,
-    default_db_path,
     is_rekordbox_running,
     resolve_db_path,
 )
@@ -26,7 +25,6 @@ __all__ = [
     "TrackRow",
     "build_name_index",
     "build_plan",
-    "default_db_path",
     "is_rekordbox_running",
     "remap_by_root",
     "resolve_db_path",

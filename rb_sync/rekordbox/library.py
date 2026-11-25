@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import gc
-import os
 import shutil
 import subprocess
 import sys
@@ -26,19 +25,25 @@ class RekordboxError(RuntimeError):
     """库访问相关的错误（找不到库 / 依赖缺失 / 库被占用）。"""
 
 
-def default_db_path() -> Path:
-    appdata = os.environ.get("APPDATA")
-    if not appdata:
-        raise RekordboxError("无法确定 APPDATA，请用 --db 显式指定 master.db 路径")
-    return Path(appdata) / "Pioneer" / "rekordbox" / "master.db"
-
-
 def resolve_db_path(explicit: str | Path | None = None) -> Path:
-    path = Path(explicit).expanduser() if explicit else default_db_path()
+    """把用户给的库路径解析成一个确实存在的文件。
+
+    **这里没有默认值。** 仓库里不存在"默认库路径"（CLAUDE.md C5）：库在哪块盘、
+    哪个目录，只有用户知道。路径只能来自 `--db`、`config.local.json` 的
+    `rekordbox.db_path`，或调用方传入的值。
+    """
+    if explicit is None or not str(explicit).strip():
+        raise RekordboxError(
+            "没有指定 Rekordbox 库路径。\n"
+            "  用 --db 指定 master.db 的完整路径，"
+            "或在配置里设 rekordbox.db_path（见 README「配置：路径由你决定」）\n"
+            "  本项目不提供默认库位置：库在哪，只有你知道"
+        )
+    path = Path(explicit).expanduser()
     if not path.is_file():
         raise RekordboxError(
             f"找不到 Rekordbox 库：{path}\n"
-            "  用 --db 指定 master.db 的完整路径（便携/迁移场景常见）"
+            "  确认路径拼写、以及那块盘是否已挂载（库里记录的路径也可能失效，用 relink 处理）"
         )
     return path
 

@@ -154,32 +154,29 @@ rb-sync write
 
 ## 11. 当前状态与已定决策（2026-10-28）
 
-### 目标库（唯一）
+### 目标库（唯一，路径由用户配置）
 
 ```
-F:\PIONEER\Master\master.db     11,038,720 B   最后写入 2026-10-26 23:32:48
+<库盘>:\PIONEER\Master\master.db
 ```
 
-- 移动硬盘是 **WD Elements，当前盘符 `F:`**（不是 E: —— 内置 SSD 占了 E:，这个盘符漂移
-  正是库里 332 首路径失效的成因）。盘符可能再变，程序不能写死。
-- 该库实测：`integrity_check: ok`，usn 46498，**1,231 首**，两个文件夹 `Lib` / `Playlist`
-  下共 **46 个歌单**。
+- 目标库的完整路径**只能来自用户配置**（`config.local.json` 的 `rekordbox.db_path`，或命令行 `--db`）。仓库不提供任何默认值 —— 库通常放在外置盘上，盘符和目录名因机器而异。
+- 该库是 SQLCipher 加密的；`doctor` / `relink` 读的是复制到 `state/.cache/` 的副本，真库一个字节都不动。
 - `Attribute=1` = 文件夹，`Attribute=0` = 歌单（实证，写库时建文件夹必须用 1）。
-- 另有三份**不再关注**的库：`%APPDATA%\Pioneer\rekordbox\master.db`（8 首，6-30 的空库）、
-  `Corrupt\20260614221325`（460 首，6-11）、`Corrupt\20260630230752`（9 首，6-16）。
-  它们只是"崩过两次"的证据，不作为同步目标。
+- 一台机器上常常同时存在**多份** `master.db`（安装目录、`%APPDATA%`、外置盘各一份；历史坏库还可能被隔离在 `Corrupt/` 下）。哪份是"真库"只能由用户确认（见下面的未解疑问）。
+- 曲目数、歌单数、缺失条数这类**机器快照数字不写进文档**：它们随曲库变化立刻过期，需要时用 `doctor` / `relink` 现算。
 
 ### 已定决策
 
 1. **写库方式**：直接写 `master.db`（走 pyrekordbox），不做导出 XML 那条线。
 2. **不需要 LLM**：playlist 归属来自歌单本身，是「字典查找 + 集合运算 + 主键插入」，
    用模型会破坏幂等性与可复现性。
-3. **缺失文件暂缓处理**：338 首缺失里，306 首已算出重定位映射（见 `state/relink_plan.json`：
-   root_remap 252 / basename 32 / basename_ext 22），剩 32 首（全部 Maozon 专辑）全盘确实不存在。
-   **本轮不追这 32 首，也不执行 `--apply`。**
+3. **缺失文件暂缓处理**：`relink` 会把库里路径失效的曲目分成可 `root_remap`、可
+   `basename` / `basename_ext` 重定位、以及全盘确实不存在三类。**政策：先不追"确实不存在"
+   的那批，也不自动 `--apply`** —— 计划只算不写，等用户确认。
 4. **交互形态**：核心仍是 CLI；另加一个**本机 WebUI**（`rb-sync serve`），
    用 `http.server` + 原生 HTML/JS，零构建链。设计见 `docs/WEBUI.md`。
-   - 允许用户手动指定 `master.db` 路径与曲库目录（盘符会变，绝不能写死）。
+   - 允许用户手动指定 `master.db` 路径与曲库目录（路径只能来自配置，绝不能写死）。
    - 配置落在 `config.local.json`（已 gitignore）：`rekordbox.db_path`、
      `rekordbox.music_roots`、`paths.previous_roots`。
    - 服务层已抽出（`services.py`），CLI 与 Web 共用同一份逻辑。
@@ -189,9 +186,8 @@ F:\PIONEER\Master\master.db     11,038,720 B   最后写入 2026-10-26 23:32:48
 
 ### 未解开的疑问（恢复工作时的第一件事）
 
-Rekordbox 启动时打开的到底是 `%APPDATA%` 那份（8 首）还是 `F:` 这份（1,231 首）？
-这台机器上找不到 APPDATA 重定向的证据，而 `F:` 那份在 10-26 被写过。
-**判断方法：打开 Rekordbox 看曲目数。** 这决定 `write` 该写哪个文件。
+Rekordbox 启动时打开的到底是哪一份 `master.db`？可能是 `%APPDATA%` 下那份（往往是空库或旧库），也可能是外置盘上那份 —— 同名不同内容。
+**判断方法：打开 Rekordbox 看曲目数，与各候选库的 `doctor` 输出对比。** 这决定 `write` 该写哪个文件；不确认就不要写库。
 
 ### 安全约束（写库前必须满足）
 

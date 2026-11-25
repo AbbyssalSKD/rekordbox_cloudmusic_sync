@@ -6,8 +6,8 @@ rem Close this window to stop the server.
 rem
 rem IMPORTANT: the interpreter must live OUTSIDE this repository.
 rem Anything whose exe sits inside the workspace is confined by the local
-rem sandbox and cannot write to F:\ - that is what produced the "moved 0"
-rem plus "Permission denied" result. So D:\rb-sync-venv is preferred,
+rem sandbox and cannot write to the external music drive - that is what produced
+rem the "moved 0" plus "Permission denied" result. So D:\rb-sync-venv is preferred,
 rem then .venv, then PATH. Override with RB_SYNC_PYTHON if needed.
 rem ---------------------------------------------------------------------------
 setlocal EnableExtensions
@@ -20,7 +20,7 @@ if not defined PY (
   ) else (
     if exist "%~dp0.venv\Scripts\python.exe" (
       set "PY=%~dp0.venv\Scripts\python.exe"
-      echo [webui] WARNING: using .venv inside the repo - it may not be able to write to F:\
+      echo [webui] WARNING: using .venv inside the repo - it may not be able to write to an external drive
     ) else (
       set "PY=python"
       echo [webui] no venv found - falling back to "python" from PATH.
